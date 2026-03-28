@@ -226,11 +226,11 @@ export default function UploadPage() {
     const { id: sessionId } = await sessionRes.json();
     sessionIdRef.current = sessionId;
 
-    // Upload in batches of 5
+    // Upload one file at a time to avoid body-size limits (HEIC files can be 10–15 MB each)
     let done = 0;
     setUploadProgress({ done: 0, total: files.length });
-    for (let i = 0; i < files.length; i += 5) {
-      const batch = files.slice(i, i + 5);
+    for (let i = 0; i < files.length; i += 1) {
+      const batch = files.slice(i, i + 1);
       const formData = new FormData();
       batch.forEach((f) => formData.append('files', f));
       const uploadRes = await fetch(`/api/sessions/${sessionId}/upload`, { method: 'POST', body: formData });

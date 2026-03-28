@@ -4,16 +4,22 @@ services:
     runtime: node
     buildCommand: npm install && npm run build
     startCommand: npm start
-    # Persistent disk so uploaded photos survive deploys/restarts
-    disk:
-      name: photocull-storage
-      mountPath: /data
-      sizeGB: 10
+    # ── Storage ─────────────────────────────────────────────────────────────
+    # FREE TIER: STORAGE_DIR points to /tmp — writable on all plans but
+    # files are lost when the service restarts. Fine for beta testing.
+    #
+    # PAID UPGRADE (~$9.50/mo total): uncomment the disk block below and
+    # change STORAGE_DIR to /data/photocull for persistent storage.
+    #
+    # disk:
+    #   name: photocull-storage
+    #   mountPath: /data
+    #   sizeGB: 10
     envVars:
       - key: NODE_ENV
         value: production
       - key: STORAGE_DIR
-        value: /data/photocull
+        value: /tmp/photocull
       - key: ANTHROPIC_API_KEY
         sync: false          # set manually in Render dashboard
       - key: BETA_ACCESS_CODE
