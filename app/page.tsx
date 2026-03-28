@@ -40,8 +40,9 @@ function AccessGate({ onAuthorized }: { onAuthorized: () => void }) {
   return (
     <main className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4">
       <div className="mb-8 text-center">
-        <h1 className="text-3xl font-bold text-gray-900 tracking-tight">PhotoCull</h1>
-        <p className="mt-1 text-gray-500 text-sm">AI-powered photo library cleanup</p>
+        <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Winnow</h1>
+        <p className="mt-2 text-gray-700 text-base font-medium">Delete the clutter. Keep the memories.</p>
+        <p className="mt-1 text-gray-400 text-sm">AI-powered photo cleanup</p>
       </div>
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
         <h2 className="text-lg font-semibold text-gray-800 mb-1">Beta access</h2>
@@ -133,7 +134,7 @@ export default function UploadPage() {
   }, []);
 
   const [mode, setMode] = useState<'aggressiveness' | 'percentage'>('aggressiveness');
-  const [aggressiveness, setAggressiveness] = useState(2); // default to Light for safety
+  const [aggressiveness, setAggressiveness] = useState(3); // default to Balanced
   const [targetPercentage, setTargetPercentage] = useState(30);
   const [categoryConfig, setCategoryConfig] = useState<PhotoCategoryConfig>(DEFAULT_CATEGORY_CONFIG);
   const [skipAI, setSkipAI] = useState(false);
@@ -264,8 +265,9 @@ export default function UploadPage() {
 
       {/* Logo */}
       <div className="mb-8 text-center">
-        <h1 className="text-3xl font-bold text-gray-900 tracking-tight">PhotoCull</h1>
-        <p className="mt-1 text-gray-500 text-sm">AI-powered photo library cleanup</p>
+        <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Winnow</h1>
+        <p className="mt-2 text-gray-700 text-base font-medium">Delete the clutter. Keep the memories.</p>
+        <p className="mt-1 text-gray-400 text-sm">AI-powered photo cleanup</p>
       </div>
 
       {/* Main card */}
@@ -436,10 +438,10 @@ export default function UploadPage() {
 
         {/* Privacy notice */}
         <div className="mx-6 mb-4 p-3 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-700 space-y-1">
-          <p className="font-semibold">🔒 How PhotoCull handles your photos</p>
+          <p className="font-semibold">🔒 How Winnow handles your photos</p>
           <ul className="space-y-0.5 text-blue-600">
             <li>· Your original photos are <strong>never modified or deleted</strong> without your explicit confirmation</li>
-            <li>· PhotoCull works with <strong>copies</strong> — your originals stay exactly where they are</li>
+            <li>· Winnow works with <strong>copies</strong> — your originals stay exactly where they are</li>
             <li>· Blur and duplicate detection runs <strong>entirely on this machine</strong></li>
             <li>· Small preview thumbnails (200×200px) are sent to <strong>Claude AI</strong> for content classification — only when AI scoring is on</li>
             <li>· Thumbnails are not stored permanently by Anthropic per their <a href="https://www.anthropic.com/legal/privacy" target="_blank" rel="noopener noreferrer" className="underline">data policy</a></li>
@@ -490,7 +492,7 @@ export default function UploadPage() {
       </div>
 
       <p className="mt-5 text-xs text-gray-400 text-center max-w-sm">
-        PhotoCull never deletes anything without your explicit confirmation at the review step.
+        Winnow never deletes anything without your explicit confirmation at the review step.
       </p>
     </main>
   );

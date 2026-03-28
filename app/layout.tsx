@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PhotoCull — Clean up your photo library",
-  description: "AI-powered photo library cleanup. Remove duplicates, blurry shots, and clutter.",
+  title: "Winnow — Delete the clutter. Keep the memories.",
+  description: "AI-powered photo cleanup. Remove duplicates, blurry shots, and clutter in minutes.",
 };
 
 export default function RootLayout({

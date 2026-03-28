@@ -787,7 +787,7 @@ export default function ReviewPage() {
                 onClick={() => router.push('/')}
                 className="text-gray-400 hover:text-gray-600 text-sm mb-1 flex items-center gap-1"
               >
-                ← PhotoCull
+                ← Winnow
               </button>
               {/* Summary stats */}
               <div className="flex items-center gap-3 flex-wrap text-sm">

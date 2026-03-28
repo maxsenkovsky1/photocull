@@ -8,7 +8,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const mode: SessionMode = body.mode === 'percentage' ? 'percentage' : 'aggressiveness';
-    const aggressiveness = Math.min(5, Math.max(1, parseInt(body.aggressiveness) || 2));
+    const aggressiveness = Math.min(5, Math.max(1, parseInt(body.aggressiveness) || 3));
     const targetPercentage = mode === 'percentage'
       ? Math.min(99, Math.max(1, parseInt(body.targetPercentage) || 30))
       : null;

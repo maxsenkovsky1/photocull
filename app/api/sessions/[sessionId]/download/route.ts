@@ -19,7 +19,7 @@ export async function GET(
   const keptPhotos = session.photos.filter((p) => p.status !== 'trash');
 
   const zip = new JSZip();
-  const folder = zip.folder('PhotoCull_Kept');
+  const folder = zip.folder('Winnow_Kept');
 
   for (const photo of keptPhotos) {
     const filePath = getOriginalPath(sessionId, photo.id, photo.ext);
@@ -34,7 +34,7 @@ export async function GET(
   return new NextResponse(zipBuffer as unknown as BodyInit, {
     headers: {
       'Content-Type': 'application/zip',
-      'Content-Disposition': `attachment; filename="PhotoCull_${sessionId.slice(0, 8)}.zip"`,
+      'Content-Disposition': `attachment; filename="Winnow_${sessionId.slice(0, 8)}.zip"`,
     },
   });
 }
