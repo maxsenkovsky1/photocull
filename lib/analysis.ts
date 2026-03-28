@@ -40,15 +40,24 @@ export async function prepareForSharp(
   } catch { /* sips not available (Linux) */ }
 
   // 2. Try ffmpeg-static (bundled binary, works on Linux/Render without system deps)
+  //    -vf scale=iw:ih forces the software scaler which correctly handles
+  //    10-bit HDR → 8-bit SDR and preserves chroma (color) channels.
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const ffmpegPath = require('ffmpeg-static') as string | null;
     if (ffmpegPath) {
-      await execFileAsync(ffmpegPath, ['-y', '-i', imagePath, '-pix_fmt', 'yuvj420p', '-q:v', '2', tmpFile]);
-      if (fs.existsSync(tmpFile)) {
+      await execFileAsync(ffmpegPath, [
+        '-y', '-i', imagePath,
+        '-vf', 'scale=iw:ih',
+        '-q:v', '2',
+        tmpFile,
+      ]);
+      const size = fs.existsSync(tmpFile) ? fs.statSync(tmpFile).size : 0;
+      if (size > 1000) {
         console.log('[heic] converted via ffmpeg-static');
         return { processPath: tmpFile, cleanup };
       }
+      console.error('[heic] ffmpeg-static produced empty output, falling back');
     }
   } catch (err) {
     console.error('[heic] ffmpeg-static failed:', (err as Error).message);
