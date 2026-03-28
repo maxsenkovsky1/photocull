@@ -10,8 +10,10 @@ const execFileAsync = promisify(execFile);
 
 /**
  * HEIC/HEIF files need pre-conversion because Sharp's bundled libheif
- * lacks the HEVC codec. On macOS, use sips (built-in) to convert to JPEG
- * first, then process the JPEG with Sharp.
+ * lacks the HEVC codec. On macOS, sips (built-in) handles it perfectly.
+ * Falls back to extracting the JPEG thumbnail embedded in the EXIF data
+ * (every iPhone HEIC contains one — typically 512×384 px, good enough for
+ * blur scoring, pHash, and AI classification).
  *
  * Returns the path to use for Sharp operations, plus a cleanup callback
  * to delete the temp file (if one was created).
@@ -30,56 +32,28 @@ export async function prepareForSharp(
   );
   const cleanup = () => { try { fs.unlinkSync(tmpFile); } catch { /* ignore */ } };
 
-  // 1. Try sips (macOS built-in — fast, perfect color)
+  // 1. sips — macOS built-in, fast and colour-accurate
   try {
     await execFileAsync('sips', ['-s', 'format', 'jpeg', imagePath, '--out', tmpFile]);
     if (fs.existsSync(tmpFile) && fs.statSync(tmpFile).size > 1000) {
-      console.log('[heic] converted via sips');
       return { processPath: tmpFile, cleanup };
     }
-  } catch { /* sips not available (Linux) */ }
+  } catch { /* sips not available */ }
 
-  // 2. Extract the JPEG thumbnail embedded in every iPhone HEIC's EXIF data.
-  //    This avoids HEVC decoding entirely — the thumbnail is already a JPEG.
-  //    Typically 512×384 px on modern iPhones — good enough for AI + display.
+  // 2. Extract the JPEG thumbnail embedded in the EXIF data (no HEVC decoding needed)
   try {
     const meta = await sharp(imagePath).metadata();
     if (meta.exif && meta.exif.length > 100) {
       const thumb = extractJpegFromExif(meta.exif);
       if (thumb) {
         fs.writeFileSync(tmpFile, thumb);
-        console.log('[heic] extracted JPEG thumbnail from EXIF, size:', thumb.length);
         return { processPath: tmpFile, cleanup };
       }
     }
-  } catch (err) {
-    console.error('[heic] EXIF thumbnail extraction failed:', (err as Error).message);
-  }
+  } catch { /* ignore */ }
 
-  // 3. Try ffmpeg-static as a last resort (known to produce B&W on iPhone Main10
-  //    HEIC due to missing 10-bit chroma support in the static build — logged for info)
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const ffmpegPath = require('ffmpeg-static') as string | null;
-    if (ffmpegPath) {
-      await execFileAsync(ffmpegPath, [
-        '-y', '-i', imagePath,
-        '-vf', 'scale=iw:ih,format=yuv420p',
-        '-q:v', '2',
-        tmpFile,
-      ]);
-      const size = fs.existsSync(tmpFile) ? fs.statSync(tmpFile).size : 0;
-      if (size > 1000) {
-        console.log('[heic] converted via ffmpeg-static (may be B&W for 10-bit HEIC)');
-        return { processPath: tmpFile, cleanup };
-      }
-    }
-  } catch (err) {
-    console.error('[heic] ffmpeg-static failed:', (err as Error).message);
-  }
-
-  // 4. Last resort — return original (Sharp will fail gracefully)
-  console.error('[heic] all converters failed for:', path.basename(imagePath));
+  // Fall through — Sharp will fail gracefully on unsupported HEIC
+  cleanup();
   return { processPath: imagePath, cleanup: () => {} };
 }
 
