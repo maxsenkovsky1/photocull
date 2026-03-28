@@ -36,17 +36,26 @@ export async function prepareForSharp(
     if (fs.existsSync(tmpFile)) return { processPath: tmpFile, cleanup };
   } catch { /* sips not available (Linux) */ }
 
-  // 2. Fallback: heic-convert (pure JS, works on Linux/Render)
+  // 2. Fallback: heic-convert (pure JS WASM, works on Linux/Render)
+  //    Wrap in a 45-second timeout — the WASM decoder can hang on corrupt files.
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const heicConvert = require('heic-convert') as (opts: {
       buffer: Buffer; format: 'JPEG'; quality: number;
     }) => Promise<ArrayBuffer>;
     const inputBuffer = fs.readFileSync(imagePath);
-    const outputBuffer = await heicConvert({ buffer: inputBuffer, format: 'JPEG', quality: 0.9 });
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('heic-convert timeout')), 45_000),
+    );
+    const outputBuffer = await Promise.race([
+      heicConvert({ buffer: inputBuffer, format: 'JPEG', quality: 0.9 }),
+      timeout,
+    ]);
     fs.writeFileSync(tmpFile, Buffer.from(outputBuffer));
     return { processPath: tmpFile, cleanup };
-  } catch { /* heic-convert failed */ }
+  } catch (err) {
+    console.error('[prepareForSharp] heic-convert failed:', (err as Error).message);
+  }
 
   // 3. Last resort — return original (Sharp will fail gracefully)
   return { processPath: imagePath, cleanup: () => {} };
