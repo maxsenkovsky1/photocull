@@ -36,8 +36,13 @@ export async function prepareForSharp(
     if (fs.existsSync(tmpFile)) return { processPath: tmpFile, cleanup };
   } catch { /* sips not available (Linux) */ }
 
-  // 2. Fallback: heic-convert (pure JS WASM, works on Linux/Render)
-  //    Wrap in a 45-second timeout — the WASM decoder can hang on corrupt files.
+  // 2. Try ffmpeg (installed via Dockerfile on Linux/Render — reliable HEVC decoder)
+  try {
+    await execFileAsync('ffmpeg', ['-y', '-i', imagePath, '-q:v', '2', tmpFile]);
+    if (fs.existsSync(tmpFile)) return { processPath: tmpFile, cleanup };
+  } catch { /* ffmpeg not available */ }
+
+  // 3. Fallback: heic-convert (pure JS WASM — slow but no system deps)
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const heicConvert = require('heic-convert') as (opts: {
@@ -57,7 +62,7 @@ export async function prepareForSharp(
     console.error('[prepareForSharp] heic-convert failed:', (err as Error).message);
   }
 
-  // 3. Last resort — return original (Sharp will fail gracefully)
+  // 4. Last resort — return original (Sharp will fail gracefully)
   return { processPath: imagePath, cleanup: () => {} };
 }
 
