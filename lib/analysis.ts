@@ -33,20 +33,29 @@ export async function prepareForSharp(
   // 1. Try sips (macOS built-in — fast)
   try {
     await execFileAsync('sips', ['-s', 'format', 'jpeg', imagePath, '--out', tmpFile]);
-    if (fs.existsSync(tmpFile)) return { processPath: tmpFile, cleanup };
+    if (fs.existsSync(tmpFile)) {
+      console.log('[heic] converted via sips');
+      return { processPath: tmpFile, cleanup };
+    }
   } catch { /* sips not available (Linux) */ }
 
   // 2. Try ffmpeg-static (bundled binary, works on Linux/Render without system deps)
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const ffmpegPath = require('ffmpeg-static') as string;
+    const ffmpegPath = require('ffmpeg-static') as string | null;
     if (ffmpegPath) {
       await execFileAsync(ffmpegPath, ['-y', '-i', imagePath, '-q:v', '2', tmpFile]);
-      if (fs.existsSync(tmpFile)) return { processPath: tmpFile, cleanup };
+      if (fs.existsSync(tmpFile)) {
+        console.log('[heic] converted via ffmpeg-static');
+        return { processPath: tmpFile, cleanup };
+      }
     }
-  } catch { /* ffmpeg-static not available or failed */ }
+  } catch (err) {
+    console.error('[heic] ffmpeg-static failed:', (err as Error).message);
+  }
 
-  // 3. Fallback: heic-convert (pure JS WASM — slow but no system deps)
+  // 3. Fallback: heic-convert (pure JS WASM — very slow, last resort)
+  console.warn('[heic] falling back to heic-convert (slow!) — ffmpeg-static unavailable');
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const heicConvert = require('heic-convert') as (opts: {
@@ -61,9 +70,10 @@ export async function prepareForSharp(
       timeout,
     ]);
     fs.writeFileSync(tmpFile, Buffer.from(outputBuffer));
+    console.log('[heic] converted via heic-convert');
     return { processPath: tmpFile, cleanup };
   } catch (err) {
-    console.error('[prepareForSharp] heic-convert failed:', (err as Error).message);
+    console.error('[heic] heic-convert failed:', (err as Error).message);
   }
 
   // 4. Last resort — return original (Sharp will fail gracefully)
