@@ -36,11 +36,15 @@ export async function prepareForSharp(
     if (fs.existsSync(tmpFile)) return { processPath: tmpFile, cleanup };
   } catch { /* sips not available (Linux) */ }
 
-  // 2. Try ffmpeg (installed via Dockerfile on Linux/Render — reliable HEVC decoder)
+  // 2. Try ffmpeg-static (bundled binary, works on Linux/Render without system deps)
   try {
-    await execFileAsync('ffmpeg', ['-y', '-i', imagePath, '-q:v', '2', tmpFile]);
-    if (fs.existsSync(tmpFile)) return { processPath: tmpFile, cleanup };
-  } catch { /* ffmpeg not available */ }
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const ffmpegPath = require('ffmpeg-static') as string;
+    if (ffmpegPath) {
+      await execFileAsync(ffmpegPath, ['-y', '-i', imagePath, '-q:v', '2', tmpFile]);
+      if (fs.existsSync(tmpFile)) return { processPath: tmpFile, cleanup };
+    }
+  } catch { /* ffmpeg-static not available or failed */ }
 
   // 3. Fallback: heic-convert (pure JS WASM — slow but no system deps)
   try {

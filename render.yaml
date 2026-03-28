@@ -1,7 +1,9 @@
 services:
   - type: web
     name: photocull
-    runtime: docker
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
     # ── Storage ─────────────────────────────────────────────────────────────
     # FREE TIER: /tmp is always writable but files are lost on restart.
     # Fine for beta testing — users just need to finish a session in one go.
@@ -17,6 +19,6 @@ services:
       - key: STORAGE_DIR
         value: /tmp/photocull
       - key: ANTHROPIC_API_KEY
-        sync: false          # set manually in Render dashboard
+        sync: false
       - key: BETA_ACCESS_CODE
-        sync: false          # set manually in Render dashboard
+        sync: false
