@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: photocull
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    # Persistent disk so uploaded photos survive deploys/restarts
+    disk:
+      name: photocull-storage
+      mountPath: /data
+      sizeGB: 10
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: STORAGE_DIR
+        value: /data/photocull
+      - key: ANTHROPIC_API_KEY
+        sync: false          # set manually in Render dashboard
+      - key: BETA_ACCESS_CODE
+        sync: false          # set manually in Render dashboard
