@@ -44,7 +44,7 @@ export async function prepareForSharp(
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const ffmpegPath = require('ffmpeg-static') as string | null;
     if (ffmpegPath) {
-      await execFileAsync(ffmpegPath, ['-y', '-i', imagePath, '-q:v', '2', tmpFile]);
+      await execFileAsync(ffmpegPath, ['-y', '-i', imagePath, '-pix_fmt', 'yuvj420p', '-q:v', '2', tmpFile]);
       if (fs.existsSync(tmpFile)) {
         console.log('[heic] converted via ffmpeg-static');
         return { processPath: tmpFile, cleanup };
