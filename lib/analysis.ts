@@ -30,63 +30,107 @@ export async function prepareForSharp(
   );
   const cleanup = () => { try { fs.unlinkSync(tmpFile); } catch { /* ignore */ } };
 
-  // 1. Try sips (macOS built-in — fast)
+  // 1. Try sips (macOS built-in — fast, perfect color)
   try {
     await execFileAsync('sips', ['-s', 'format', 'jpeg', imagePath, '--out', tmpFile]);
-    if (fs.existsSync(tmpFile)) {
+    if (fs.existsSync(tmpFile) && fs.statSync(tmpFile).size > 1000) {
       console.log('[heic] converted via sips');
       return { processPath: tmpFile, cleanup };
     }
   } catch { /* sips not available (Linux) */ }
 
-  // 2. Try ffmpeg-static (bundled binary, works on Linux/Render without system deps)
-  //    -vf scale=iw:ih forces the software scaler which correctly handles
-  //    10-bit HDR → 8-bit SDR and preserves chroma (color) channels.
+  // 2. Extract the JPEG thumbnail embedded in every iPhone HEIC's EXIF data.
+  //    This avoids HEVC decoding entirely — the thumbnail is already a JPEG.
+  //    Typically 512×384 px on modern iPhones — good enough for AI + display.
+  try {
+    const meta = await sharp(imagePath).metadata();
+    if (meta.exif && meta.exif.length > 100) {
+      const thumb = extractJpegFromExif(meta.exif);
+      if (thumb) {
+        fs.writeFileSync(tmpFile, thumb);
+        console.log('[heic] extracted JPEG thumbnail from EXIF, size:', thumb.length);
+        return { processPath: tmpFile, cleanup };
+      }
+    }
+  } catch (err) {
+    console.error('[heic] EXIF thumbnail extraction failed:', (err as Error).message);
+  }
+
+  // 3. Try ffmpeg-static as a last resort (known to produce B&W on iPhone Main10
+  //    HEIC due to missing 10-bit chroma support in the static build — logged for info)
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const ffmpegPath = require('ffmpeg-static') as string | null;
     if (ffmpegPath) {
       await execFileAsync(ffmpegPath, [
         '-y', '-i', imagePath,
-        '-vf', 'scale=iw:ih',
+        '-vf', 'scale=iw:ih,format=yuv420p',
         '-q:v', '2',
         tmpFile,
       ]);
       const size = fs.existsSync(tmpFile) ? fs.statSync(tmpFile).size : 0;
       if (size > 1000) {
-        console.log('[heic] converted via ffmpeg-static');
+        console.log('[heic] converted via ffmpeg-static (may be B&W for 10-bit HEIC)');
         return { processPath: tmpFile, cleanup };
       }
-      console.error('[heic] ffmpeg-static produced empty output, falling back');
     }
   } catch (err) {
     console.error('[heic] ffmpeg-static failed:', (err as Error).message);
   }
 
-  // 3. Fallback: heic-convert (pure JS WASM — very slow, last resort)
-  console.warn('[heic] falling back to heic-convert (slow!) — ffmpeg-static unavailable');
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const heicConvert = require('heic-convert') as (opts: {
-      buffer: Buffer; format: 'JPEG'; quality: number;
-    }) => Promise<ArrayBuffer>;
-    const inputBuffer = fs.readFileSync(imagePath);
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('heic-convert timeout')), 45_000),
-    );
-    const outputBuffer = await Promise.race([
-      heicConvert({ buffer: inputBuffer, format: 'JPEG', quality: 0.9 }),
-      timeout,
-    ]);
-    fs.writeFileSync(tmpFile, Buffer.from(outputBuffer));
-    console.log('[heic] converted via heic-convert');
-    return { processPath: tmpFile, cleanup };
-  } catch (err) {
-    console.error('[heic] heic-convert failed:', (err as Error).message);
-  }
-
   // 4. Last resort — return original (Sharp will fail gracefully)
+  console.error('[heic] all converters failed for:', path.basename(imagePath));
   return { processPath: imagePath, cleanup: () => {} };
+}
+
+/**
+ * Parse a raw EXIF buffer and extract the IFD1 JPEG thumbnail bytes.
+ * Every iPhone photo embeds a JPEG thumbnail in the EXIF IFD1 entry.
+ */
+function extractJpegFromExif(exif: Buffer): Buffer | null {
+  try {
+    // EXIF starts with "Exif\0\0" then a TIFF header
+    const base = 6;
+    const byteOrder = exif.toString('ascii', base, base + 2);
+    const le = byteOrder === 'II'; // little-endian (Intel) vs big-endian (Motorola)
+    const r16 = (o: number) => le ? exif.readUInt16LE(o) : exif.readUInt16BE(o);
+    const r32 = (o: number) => le ? exif.readUInt32LE(o) : exif.readUInt32BE(o);
+
+    // IFD0 starts at the offset stored in the TIFF header
+    const ifd0 = base + r32(base + 4);
+    const ifd0Count = r16(ifd0);
+
+    // IFD1 offset is stored at the end of IFD0's entry list
+    const ifd1Ptr = r32(ifd0 + 2 + ifd0Count * 12);
+    if (!ifd1Ptr || ifd1Ptr + base >= exif.length) return null;
+    const ifd1 = base + ifd1Ptr;
+
+    const ifd1Count = r16(ifd1);
+    let thumbOffset = 0;
+    let thumbLength = 0;
+
+    for (let i = 0; i < ifd1Count; i++) {
+      const e = ifd1 + 2 + i * 12;
+      if (e + 12 > exif.length) break;
+      const tag = r16(e);
+      if (tag === 0x0201) thumbOffset = r32(e + 8); // JpegInterchangeFormat
+      if (tag === 0x0202) thumbLength = r32(e + 8); // JpegInterchangeFormatLength
+    }
+
+    if (!thumbOffset || !thumbLength) return null;
+    const start = base + thumbOffset;
+    const end = start + thumbLength;
+    if (end > exif.length) return null;
+
+    const thumb = exif.slice(start, end);
+    // Validate it's a real JPEG (starts with FF D8 FF) and is a reasonable size
+    if (thumb[0] === 0xFF && thumb[1] === 0xD8 && thumb.length > 5000) {
+      return thumb;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**
