@@ -232,7 +232,7 @@ export async function generateThumbnail(input: string | Buffer): Promise<Buffer 
       '--resampleHeightWidthMax', '400',
       '-s', 'format', 'jpeg',
       '-s', 'formatOptions', '80',
-      imagePath,
+      input,
       '--out', tmpFile,
     ]);
     if (fs.existsSync(tmpFile) && fs.statSync(tmpFile).size > 500) {
@@ -241,7 +241,7 @@ export async function generateThumbnail(input: string | Buffer): Promise<Buffer 
       return buf;
     }
   } catch (err) {
-    console.error(`[thumbnail] sips fallback failed for ${imagePath}:`, err);
+    console.error(`[thumbnail] sips fallback failed for ${input}:`, err);
     try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
   }
 
