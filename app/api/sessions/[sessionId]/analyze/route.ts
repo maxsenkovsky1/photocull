@@ -66,14 +66,28 @@ export async function POST(
 
     const { processPath, cleanup } = await prepareForSharp(originalPath);
     try {
-      const meta = await extractMetadata(processPath);
-      photo.width   = meta.width;
-      photo.height  = meta.height;
-      photo.takenAt = meta.takenAt;
-      photo.blurScore = await computeBlurScore(processPath);
-      photo.phash     = await computePhash(processPath);
+      // Decode the original file once into a 512px working buffer.
+      // All subsequent operations (blur, pHash, thumbnail) run in parallel
+      // from this small in-memory buffer — avoiding 4 separate disk reads.
+      const workingBuffer = await sharp(processPath, { limitInputPixels: false, sequentialRead: true })
+        .rotate()
+        .resize(512, 512, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 90 })
+        .toBuffer();
 
-      const thumbnailBuffer = await generateThumbnail(processPath);
+      const [meta, blurScore, phash, thumbnailBuffer] = await Promise.all([
+        extractMetadata(processPath),       // still needs original for EXIF
+        computeBlurScore(workingBuffer),
+        computePhash(workingBuffer),
+        generateThumbnail(workingBuffer),
+      ]);
+
+      photo.width     = meta.width;
+      photo.height    = meta.height;
+      photo.takenAt   = meta.takenAt;
+      photo.blurScore = blurScore;
+      photo.phash     = phash;
+
       if (thumbnailBuffer) {
         fs.mkdirSync(getThumbnailsDir(sessionId), { recursive: true });
         fs.writeFileSync(getThumbnailPath(sessionId, photo.id), thumbnailBuffer);

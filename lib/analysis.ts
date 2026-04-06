@@ -120,9 +120,9 @@ function extractJpegFromExif(exif: Buffer): Buffer | null {
  * Returns a 16-character hex string (64 bits).
  * Lower Hamming distance = more similar images.
  */
-export async function computePhash(imagePath: string): Promise<string | null> {
+export async function computePhash(input: string | Buffer): Promise<string | null> {
   try {
-    const { data } = await sharp(imagePath, { limitInputPixels: false, sequentialRead: true })
+    const { data } = await sharp(input, { limitInputPixels: false, sequentialRead: true })
       .resize(8, 8, { fit: 'fill' })
       .grayscale()
       .raw()
@@ -153,9 +153,9 @@ export async function computePhash(imagePath: string): Promise<string | null> {
  * Rough calibration: <100 very blurry, 100–500 soft, >500 sharp.
  * NOTE: these thresholds need calibration from real-world testing.
  */
-export async function computeBlurScore(imagePath: string): Promise<number | null> {
+export async function computeBlurScore(input: string | Buffer): Promise<number | null> {
   try {
-    const { data, info } = await sharp(imagePath, { limitInputPixels: false, sequentialRead: true })
+    const { data, info } = await sharp(input, { limitInputPixels: false, sequentialRead: true })
       .resize(512, 512, { fit: 'inside' })
       .grayscale()
       .raw()
@@ -208,10 +208,10 @@ export function hammingDistance(hash1: string, hash2: string): number {
 /**
  * Generate a thumbnail (max 400px wide/tall) and return as JPEG buffer.
  */
-export async function generateThumbnail(imagePath: string): Promise<Buffer | null> {
+export async function generateThumbnail(input: string | Buffer): Promise<Buffer | null> {
   // 1. Try Sharp (fast, handles most formats)
   try {
-    return await sharp(imagePath, { limitInputPixels: false, sequentialRead: true })
+    return await sharp(input, { limitInputPixels: false, sequentialRead: true })
       .rotate() // auto-orient based on EXIF
       .resize(400, 400, { fit: 'inside', withoutEnlargement: true })
       .jpeg({ quality: 80 })
@@ -221,6 +221,8 @@ export async function generateThumbnail(imagePath: string): Promise<Buffer | nul
   }
 
   // 2. Fallback: sips (macOS built-in — handles large PNGs, HEIC, TIFF reliably)
+  // Only applicable when input is a file path
+  if (typeof input !== 'string') return null;
   const tmpFile = path.join(
     os.tmpdir(),
     `photocull_thumb_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`,
@@ -289,10 +291,10 @@ export async function extractMetadata(imagePath: string): Promise<{
  *   null       — unclear, use Claude
  */
 export async function detectContentLocally(
-  imagePath: string,
+  input: string | Buffer,
 ): Promise<PhotoClassification | null> {
   try {
-    const { data } = await sharp(imagePath, { limitInputPixels: false, sequentialRead: true })
+    const { data } = await sharp(input, { limitInputPixels: false, sequentialRead: true })
       .resize(100, 100, { fit: 'fill' })
       .grayscale()
       .raw()
