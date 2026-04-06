@@ -38,9 +38,17 @@ export async function prepareForSharp(
     if (fs.existsSync(tmpFile) && fs.statSync(tmpFile).size > 1000) {
       return { processPath: tmpFile, cleanup };
     }
-  } catch { /* sips not available */ }
+  } catch { /* sips not available (Linux) */ }
 
-  // 2. Extract the JPEG thumbnail embedded in the EXIF data (no HEVC decoding needed)
+  // 2. heif-convert — Linux (installed via libheif-examples apt package)
+  try {
+    await execFileAsync('heif-convert', ['-q', '85', imagePath, tmpFile]);
+    if (fs.existsSync(tmpFile) && fs.statSync(tmpFile).size > 1000) {
+      return { processPath: tmpFile, cleanup };
+    }
+  } catch { /* heif-convert not available */ }
+
+  // 3. Extract the JPEG thumbnail embedded in the EXIF data (no HEVC decoding needed)
   try {
     const meta = await sharp(imagePath).metadata();
     if (meta.exif && meta.exif.length > 100) {
