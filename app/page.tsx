@@ -40,7 +40,7 @@ function AccessGate({ onAuthorized }: { onAuthorized: () => void }) {
   return (
     <main className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4">
       <div className="mb-8 text-center">
-        <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Winnow</h1>
+        <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Shortlist</h1>
         <p className="mt-2 text-gray-700 text-base font-medium">Delete the clutter. Keep the memories.</p>
         <p className="mt-1 text-gray-400 text-sm">AI-powered photo cleanup</p>
       </div>
@@ -227,16 +227,25 @@ export default function UploadPage() {
     const { id: sessionId } = await sessionRes.json();
     sessionIdRef.current = sessionId;
 
-    // Upload one file at a time to avoid body-size limits (HEIC files can be 10–15 MB each)
+    // Upload one file at a time as raw binary — avoids multipart body size limits
     let done = 0;
     setUploadProgress({ done: 0, total: files.length });
     for (let i = 0; i < files.length; i += 1) {
-      const batch = files.slice(i, i + 1);
-      const formData = new FormData();
-      batch.forEach((f) => formData.append('files', f));
-      const uploadRes = await fetch(`/api/sessions/${sessionId}/upload`, { method: 'POST', body: formData });
-      if (!uploadRes.ok) { setError('Upload failed.'); setPhase('idle'); return; }
-      done += batch.length;
+      const file = files[i];
+      const url = `/api/sessions/${sessionId}/upload?filename=${encodeURIComponent(file.name)}&size=${file.size}`;
+      const uploadRes = await fetch(url, {
+        method: 'POST',
+        body: file,
+        headers: { 'Content-Type': 'application/octet-stream' },
+      });
+      if (!uploadRes.ok) {
+        let msg = `Upload failed on file ${i + 1}/${files.length} (${file.name})`;
+        try { const body = await uploadRes.json(); if (body.error) msg += `: ${body.error}`; } catch { /* ignore */ }
+        setError(msg);
+        setPhase('idle');
+        return;
+      }
+      done += 1;
       setUploadProgress({ done, total: files.length });
     }
 
@@ -265,7 +274,7 @@ export default function UploadPage() {
 
       {/* Logo */}
       <div className="mb-8 text-center">
-        <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Winnow</h1>
+        <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Shortlist</h1>
         <p className="mt-2 text-gray-700 text-base font-medium">Delete the clutter. Keep the memories.</p>
         <p className="mt-1 text-gray-400 text-sm">AI-powered photo cleanup</p>
       </div>
@@ -323,7 +332,7 @@ export default function UploadPage() {
               <button key={m} onClick={() => setMode(m)}
                 className={`flex-1 py-2 text-xs font-medium transition-colors ${mode === m ? 'bg-indigo-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}
               >
-                {m === 'aggressiveness' ? 'Aggressiveness Level' : 'Target % Removed'}
+                {m === 'aggressiveness' ? 'Cleanup Level' : 'Target % Removed'}
               </button>
             ))}
           </div>
@@ -331,7 +340,7 @@ export default function UploadPage() {
           {mode === 'aggressiveness' ? (
             <div>
               <div className="flex justify-between mb-2">
-                <label className="text-sm font-medium text-gray-700">Aggressiveness</label>
+                <label className="text-sm font-medium text-gray-700">Cleanup level</label>
                 <div className="flex items-center gap-2">
                   {isExpert && <span className="text-[10px] font-semibold bg-red-100 text-red-600 px-1.5 py-0.5 rounded">EXPERT</span>}
                   <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
@@ -438,10 +447,10 @@ export default function UploadPage() {
 
         {/* Privacy notice */}
         <div className="mx-6 mb-4 p-3 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-700 space-y-1">
-          <p className="font-semibold">🔒 How Winnow handles your photos</p>
+          <p className="font-semibold">🔒 How Shortlist handles your photos</p>
           <ul className="space-y-0.5 text-blue-600">
             <li>· Your original photos are <strong>never modified or deleted</strong> without your explicit confirmation</li>
-            <li>· Winnow works with <strong>copies</strong> — your originals stay exactly where they are</li>
+            <li>· Shortlist works with <strong>copies</strong> — your originals stay exactly where they are</li>
             <li>· Blur and duplicate detection runs <strong>entirely on this machine</strong></li>
             <li>· Small preview thumbnails (200×200px) are sent to <strong>Claude AI</strong> for content classification — only when AI scoring is on</li>
             <li>· Thumbnails are not stored permanently by Anthropic per their <a href="https://www.anthropic.com/legal/privacy" target="_blank" rel="noopener noreferrer" className="underline">data policy</a></li>
@@ -481,18 +490,13 @@ export default function UploadPage() {
                 <span>{analysisStage || 'Analyzing…'}</span>
                 <span>{analysisProgress}%</span>
               </div>
-              <p className="text-xs text-center text-gray-400">
-                {analysisProgress < 40 ? 'Stage 1/3: Processing images' :
-                 analysisProgress < 85 ? 'Stage 2/3: AI classification (this takes a moment)' :
-                 'Stage 3/3: Finding duplicates & applying rules'}
-              </p>
             </div>
           )}
         </div>
       </div>
 
       <p className="mt-5 text-xs text-gray-400 text-center max-w-sm">
-        Winnow never deletes anything without your explicit confirmation at the review step.
+        Shortlist never deletes anything without your explicit confirmation at the review step.
       </p>
     </main>
   );

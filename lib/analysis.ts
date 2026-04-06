@@ -114,7 +114,7 @@ function extractJpegFromExif(exif: Buffer): Buffer | null {
  */
 export async function computePhash(imagePath: string): Promise<string | null> {
   try {
-    const { data } = await sharp(imagePath)
+    const { data } = await sharp(imagePath, { limitInputPixels: false, sequentialRead: true })
       .resize(8, 8, { fit: 'fill' })
       .grayscale()
       .raw()
@@ -147,7 +147,7 @@ export async function computePhash(imagePath: string): Promise<string | null> {
  */
 export async function computeBlurScore(imagePath: string): Promise<number | null> {
   try {
-    const { data, info } = await sharp(imagePath)
+    const { data, info } = await sharp(imagePath, { limitInputPixels: false, sequentialRead: true })
       .resize(512, 512, { fit: 'inside' })
       .grayscale()
       .raw()
@@ -201,15 +201,41 @@ export function hammingDistance(hash1: string, hash2: string): number {
  * Generate a thumbnail (max 400px wide/tall) and return as JPEG buffer.
  */
 export async function generateThumbnail(imagePath: string): Promise<Buffer | null> {
+  // 1. Try Sharp (fast, handles most formats)
   try {
-    return await sharp(imagePath)
+    return await sharp(imagePath, { limitInputPixels: false, sequentialRead: true })
       .rotate() // auto-orient based on EXIF
       .resize(400, 400, { fit: 'inside', withoutEnlargement: true })
       .jpeg({ quality: 80 })
       .toBuffer();
-  } catch {
-    return null;
+  } catch (err) {
+    console.error(`[thumbnail] Sharp failed for ${imagePath}:`, err);
   }
+
+  // 2. Fallback: sips (macOS built-in — handles large PNGs, HEIC, TIFF reliably)
+  const tmpFile = path.join(
+    os.tmpdir(),
+    `photocull_thumb_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`,
+  );
+  try {
+    await execFileAsync('sips', [
+      '--resampleHeightWidthMax', '400',
+      '-s', 'format', 'jpeg',
+      '-s', 'formatOptions', '80',
+      imagePath,
+      '--out', tmpFile,
+    ]);
+    if (fs.existsSync(tmpFile) && fs.statSync(tmpFile).size > 500) {
+      const buf = fs.readFileSync(tmpFile);
+      fs.unlinkSync(tmpFile);
+      return buf;
+    }
+  } catch (err) {
+    console.error(`[thumbnail] sips fallback failed for ${imagePath}:`, err);
+    try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+  }
+
+  return null;
 }
 
 /**
@@ -221,7 +247,7 @@ export async function extractMetadata(imagePath: string): Promise<{
   takenAt: string | null;
 }> {
   try {
-    const metadata = await sharp(imagePath).metadata();
+    const metadata = await sharp(imagePath, { limitInputPixels: false }).metadata();
     let takenAt: string | null = null;
     if (metadata.exif) {
       // Try to parse DateTimeOriginal from EXIF
@@ -258,7 +284,7 @@ export async function detectContentLocally(
   imagePath: string,
 ): Promise<PhotoClassification | null> {
   try {
-    const { data } = await sharp(imagePath)
+    const { data } = await sharp(imagePath, { limitInputPixels: false, sequentialRead: true })
       .resize(100, 100, { fit: 'fill' })
       .grayscale()
       .raw()

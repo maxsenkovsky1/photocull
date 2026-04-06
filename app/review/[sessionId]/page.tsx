@@ -11,11 +11,13 @@ import { AGGRESSIVENESS_LABELS, DEFAULT_CATEGORY_CONFIG } from '@/types';
 
 function FinalizeModal({
   trashedPhotos,
+  keptCount,
   sessionId,
   onClose,
   onDone,
 }: {
   trashedPhotos: Photo[];
+  keptCount: number;
   sessionId: string;
   onClose: () => void;
   onDone: (result: { deleted: number; kept: number; freedBytes: number }) => void;
@@ -49,73 +51,74 @@ function FinalizeModal({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-6 pt-6 pb-4 border-b border-gray-100">
-          <h2 className="text-lg font-semibold text-gray-900">Permanently delete {trashedPhotos.length} photo{trashedPhotos.length !== 1 ? 's' : ''}?</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            This will free <strong>{formatBytes(totalSize)}</strong> of storage. <span className="text-red-600 font-medium">This cannot be undone.</span>
-          </p>
+        <div className="px-6 pt-6 pb-5 border-b border-gray-100">
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">You&apos;re done reviewing!</h2>
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <div className="bg-emerald-50 rounded-xl py-3 px-2">
+              <p className="text-2xl font-bold text-emerald-600">{keptCount}</p>
+              <p className="text-xs text-emerald-700 mt-0.5">photos kept</p>
+            </div>
+            <div className="bg-red-50 rounded-xl py-3 px-2">
+              <p className="text-2xl font-bold text-red-500">{trashedPhotos.length}</p>
+              <p className="text-xs text-red-600 mt-0.5">to delete</p>
+            </div>
+            <div className="bg-blue-50 rounded-xl py-3 px-2">
+              <p className="text-2xl font-bold text-blue-600">{formatBytes(totalSize)}</p>
+              <p className="text-xs text-blue-700 mt-0.5">freed</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Download first CTA */}
+        <div className="px-6 py-4 border-b border-gray-100">
+          <p className="text-xs text-gray-500 uppercase tracking-wide font-medium mb-2">Step 1 — Save your keepers</p>
+          <button
+            onClick={() => window.open(`/api/sessions/${sessionId}/download`, '_blank')}
+            className="w-full py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition-colors"
+          >
+            Download {keptCount} kept photo{keptCount !== 1 ? 's' : ''} as ZIP
+          </button>
         </div>
 
         {/* Thumbnail strip */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
-          <p className="text-xs text-gray-400 uppercase tracking-wide font-medium mb-3">Photos to delete</p>
-          <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-            {trashedPhotos.map((photo) => (
-              <div key={photo.id} className="aspect-square rounded-lg overflow-hidden bg-gray-100 relative">
-                <img
-                  src={`/api/image/${sessionId}/thumb/${photo.id}`}
-                  alt={photo.filename}
-                  className="w-full h-full object-cover"
-                  loading="lazy"
-                />
+          <p className="text-xs text-gray-500 uppercase tracking-wide font-medium mb-2">Step 2 — Delete clutter</p>
+          <div className="grid grid-cols-5 sm:grid-cols-7 gap-1.5 mb-3">
+            {trashedPhotos.slice(0, 21).map((photo) => (
+              <div key={photo.id} className="aspect-square rounded-lg overflow-hidden bg-gray-100">
+                <img src={`/api/image/${sessionId}/thumb/${photo.id}`} alt={photo.filename} className="w-full h-full object-cover" loading="lazy" />
               </div>
             ))}
+            {trashedPhotos.length > 21 && (
+              <div className="aspect-square rounded-lg bg-gray-100 flex items-center justify-center text-xs text-gray-400">+{trashedPhotos.length - 21}</div>
+            )}
           </div>
-        </div>
-
-        {/* Confirm checkbox */}
-        <div className="px-6 py-4 bg-red-50 border-t border-red-100">
-          <label className="flex items-start gap-3 cursor-pointer">
+          <label className="flex items-start gap-3 cursor-pointer bg-red-50 rounded-xl p-3">
             <input
               type="checkbox"
               checked={confirmed}
               onChange={(e) => setConfirmed(e.target.checked)}
-              className="mt-0.5 w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500 cursor-pointer"
+              className="mt-0.5 w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500 cursor-pointer flex-shrink-0"
             />
             <span className="text-sm text-gray-700">
-              I understand that deleting these {trashedPhotos.length} photo{trashedPhotos.length !== 1 ? 's' : ''} is permanent and cannot be undone.
+              Delete {trashedPhotos.length} photo{trashedPhotos.length !== 1 ? 's' : ''} permanently — <span className="text-red-600 font-medium">this cannot be undone</span>
             </span>
           </label>
         </div>
 
-        {/* Error */}
-        {error && (
-          <div className="px-6 py-3 bg-red-100 border-t border-red-200">
-            <p className="text-sm text-red-700">{error}</p>
-          </div>
-        )}
+        {error && <div className="px-6 py-3 bg-red-100 border-t border-red-200"><p className="text-sm text-red-700">{error}</p></div>}
 
-        {/* Actions */}
         <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3">
-          <button
-            onClick={onClose}
-            disabled={loading}
-            className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 disabled:opacity-50"
-          >
-            Cancel
+          <button onClick={onClose} disabled={loading} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 disabled:opacity-50">
+            Not yet
           </button>
           <button
             onClick={handleFinalize}
             disabled={!confirmed || loading}
             className="px-5 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
-            {loading && (
-              <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-              </svg>
-            )}
-            {loading ? 'Deleting…' : `Delete ${trashedPhotos.length} photo${trashedPhotos.length !== 1 ? 's' : ''} forever`}
+            {loading && <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" /></svg>}
+            {loading ? 'Deleting…' : `Delete ${trashedPhotos.length} forever`}
           </button>
         </div>
       </div>
@@ -199,9 +202,9 @@ type Tab = 'all' | 'duplicate' | 'blurry' | 'screenshot' | 'receipt' | 'meme' | 
 // Score badge
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ScorePill({ label, value, color }: { label: string; value: number; color: string }) {
+function ScorePill({ label, value, color, tooltip }: { label: string; value: number; color: string; tooltip: string }) {
   return (
-    <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded ${color}`}>
+    <span title={tooltip} className={`inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded cursor-help ${color}`}>
       <span className="opacity-60">{label}</span>
       <span>{value}</span>
     </span>
@@ -212,30 +215,19 @@ function ScoreBar({ photo }: { photo: Photo }) {
   return (
     <div className="flex flex-wrap gap-1 px-2 pb-1.5 pt-0.5 bg-gray-50 border-t border-gray-100">
       {photo.qualityScore !== null && (
-        <ScorePill
-          label="Q"
-          value={photo.qualityScore}
+        <ScorePill label="Quality" value={photo.qualityScore} tooltip="Technical quality: sharpness, exposure, and framing (0–100)"
           color={photo.qualityScore >= 70 ? 'bg-emerald-100 text-emerald-700' : photo.qualityScore >= 40 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-600'}
         />
       )}
       {photo.sentimentScore !== null && (
-        <ScorePill
-          label="S"
-          value={photo.sentimentScore}
+        <ScorePill label="Memory" value={photo.sentimentScore} tooltip="Memory value: how meaningful this photo likely is as a memory (0–100)"
           color={photo.sentimentScore >= 70 ? 'bg-blue-100 text-blue-700' : photo.sentimentScore >= 40 ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-500'}
         />
       )}
       {photo.faceScore !== null && photo.faceScore > 0 && (
-        <ScorePill
-          label="😊"
-          value={photo.faceScore}
+        <ScorePill label="😊" value={photo.faceScore} tooltip="Smile score: expression quality of the main subject (0–100)"
           color={photo.faceScore >= 70 ? 'bg-pink-100 text-pink-700' : photo.faceScore >= 40 ? 'bg-rose-100 text-rose-600' : 'bg-gray-100 text-gray-500'}
         />
-      )}
-      {photo.blurScore !== null && (
-        <span className="text-[10px] text-gray-400 self-center">
-          blur {Math.round(photo.blurScore).toLocaleString()}
-        </span>
       )}
     </div>
   );
@@ -452,13 +444,8 @@ function DuplicateCluster({
       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
         {/* Keeper — first, highlighted */}
         {keeper && (
-          <div className="relative">
-            <div className="absolute -top-2 left-0 right-0 flex justify-center z-10">
-              <span className="bg-emerald-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm whitespace-nowrap">
-                KEEPING
-              </span>
-            </div>
-            <div className="mt-2 ring-2 ring-emerald-400 rounded-xl overflow-hidden">
+          <div className="flex flex-col gap-1">
+            <div className="ring-2 ring-emerald-400 rounded-xl overflow-hidden">
               <PhotoCard
                 photo={keeper}
                 sessionId={sessionId}
@@ -469,19 +456,22 @@ function DuplicateCluster({
                 onHover={onHover}
               />
             </div>
+            <span className="text-center text-[10px] font-semibold text-emerald-600">Best pick ✓</span>
           </div>
         )}
         {/* Duplicates to remove */}
         {toDelete.map((photo) => (
-          <PhotoCard
-            key={photo.id}
-            photo={photo}
-            sessionId={sessionId}
-            onStatusChange={onStatusChange}
-            onFavoriteToggle={onFavoriteToggle}
-            showScores={showScores}
-            onHover={onHover}
-          />
+          <div key={photo.id} className="flex flex-col gap-1">
+            <PhotoCard
+              photo={photo}
+              sessionId={sessionId}
+              onStatusChange={onStatusChange}
+              onFavoriteToggle={onFavoriteToggle}
+              showScores={showScores}
+              onHover={onHover}
+            />
+            <span className="text-center text-[10px] text-gray-400">Similar</span>
+          </div>
         ))}
       </div>
     </div>
@@ -514,6 +504,8 @@ export default function ReviewPage() {
   const [rulesTargetPct, setRulesTargetPct] = useState(30);
   const [rulesCategoryConfig, setRulesCategoryConfig] = useState<PhotoCategoryConfig>(DEFAULT_CATEGORY_CONFIG);
   const [reapplying, setReapplying] = useState(false);
+  const [undoToast, setUndoToast] = useState<{ photoId: string; prevStatus: PhotoStatus; filename: string } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoveredPhotoId = useRef<string | null>(null);
 
   useEffect(() => {
@@ -540,6 +532,16 @@ export default function ReviewPage() {
 
   const handleStatusChange = useCallback(
     async (photoId: string, newStatus: PhotoStatus) => {
+      // Show undo toast when trashing a photo
+      if (newStatus === 'trash') {
+        const photo = session?.photos.find((p) => p.id === photoId);
+        const prevStatus = (photoStatuses[photoId] ?? photo?.status ?? 'suggested_delete') as PhotoStatus;
+        if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+        setUndoToast({ photoId, prevStatus, filename: photo?.filename ?? '' });
+        undoTimerRef.current = setTimeout(() => setUndoToast(null), 5000);
+      } else {
+        setUndoToast(null);
+      }
       // Optimistic update
       setPhotoStatuses((prev) => ({ ...prev, [photoId]: newStatus }));
       const res = await fetch(`/api/photos/${sessionId}/${photoId}`, {
@@ -548,16 +550,11 @@ export default function ReviewPage() {
         body: JSON.stringify({ status: newStatus }),
       });
       if (!res.ok) {
-        // Revert on failure
-        setPhotoStatuses((prev) => {
-          const reverted = { ...prev };
-          delete reverted[photoId];
-          return reverted;
-        });
+        setPhotoStatuses((prev) => { const r = { ...prev }; delete r[photoId]; return r; });
         console.error('Failed to update photo status');
       }
     },
-    [sessionId]
+    [sessionId, session, photoStatuses]
   );
 
   const handleBulkTrash = useCallback(
@@ -754,9 +751,7 @@ export default function ReviewPage() {
       if (!grouped.has(p.duplicateGroupId)) grouped.set(p.duplicateGroupId, []);
       grouped.get(p.duplicateGroupId)!.push(p);
     }
-    return Array.from(grouped.values()).filter((cluster) =>
-      cluster.some((p) => p.status === 'suggested_delete' || p.status === 'trash')
-    );
+    return Array.from(grouped.values());
   };
 
   const ALL_TABS: { key: Tab; label: string }[] = [
@@ -768,7 +763,7 @@ export default function ReviewPage() {
     { key: 'meme',        label: 'Memes' },
     { key: 'low_quality', label: 'Low Quality' },
     { key: 'favorites',   label: '⭐ Favorites' },
-    { key: 'keeping',     label: 'Keeping' },
+    { key: 'keeping',     label: 'Safe to keep' },
     { key: 'trash',       label: 'Trash' },
   ];
   const TAB_LIST = ALL_TABS.filter(
@@ -787,7 +782,7 @@ export default function ReviewPage() {
                 onClick={() => router.push('/')}
                 className="text-gray-400 hover:text-gray-600 text-sm mb-1 flex items-center gap-1"
               >
-                ← Winnow
+                ← Shortlist
               </button>
               {/* Summary stats */}
               <div className="flex items-center gap-3 flex-wrap text-sm">
@@ -849,20 +844,6 @@ export default function ReviewPage() {
               >
                 {showScores ? 'Hide Scores' : 'Show Scores'}
               </button>
-              <button
-                onClick={() => window.open(`/api/sessions/${sessionId}/download`, '_blank')}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
-              >
-                Download Kept
-              </button>
-              {trashed > 0 && !session.finalizedAt && (
-                <button
-                  onClick={() => setShowFinalizeModal(true)}
-                  className="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors"
-                >
-                  Empty Trash ({trashed})
-                </button>
-              )}
               {session.finalizedAt && (
                 <span className="text-xs text-gray-400 border border-gray-200 rounded-lg px-3 py-2">
                   Finalized ✓
@@ -890,7 +871,7 @@ export default function ReviewPage() {
                       rulesMode === m ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'
                     }`}
                   >
-                    {m === 'aggressiveness' ? 'Aggressiveness' : 'Target %'}
+                    {m === 'aggressiveness' ? 'Cleanup level' : 'Target %'}
                   </button>
                 ))}
               </div>
@@ -1060,14 +1041,14 @@ export default function ReviewPage() {
             <div className="text-center py-20">
               {activeTab === 'all' ? (
                 <>
-                  <div className="text-4xl mb-3">🎉</div>
-                  <p className="text-gray-700 font-medium">No suggestions at this aggressiveness level</p>
-                  <p className="text-gray-400 text-sm mt-1">Try increasing the aggressiveness slider on a new session.</p>
+                  <div className="text-4xl mb-3">✨</div>
+                  <p className="text-gray-700 font-medium text-lg">Looking good!</p>
+                  <p className="text-gray-400 text-sm mt-1">No suggestions at this cleanup level. Try <strong>Deep clean</strong> in ⚙ Adjust Rules for more suggestions.</p>
                 </>
               ) : activeTab === 'trash' ? (
-                <p className="text-gray-400">Nothing in trash yet. Mark photos as Trash to see them here.</p>
+                <p className="text-gray-400">Nothing in trash yet — mark photos as Trash to see them here.</p>
               ) : activeTab === 'keeping' ? (
-                <p className="text-gray-400">No photos in keeping — all photos were suggested for deletion.</p>
+                <p className="text-gray-400">No photos to keep — all photos were suggested for deletion.</p>
               ) : activeTab === 'favorites' ? (
                 <p className="text-gray-400">No favorites yet. Click ⭐ on any photo to protect it from deletion.</p>
               ) : (
@@ -1106,34 +1087,53 @@ export default function ReviewPage() {
         </div>
       </main>
 
+      {/* ── Undo toast ── */}
+      {undoToast && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-full shadow-xl">
+          <span className="text-gray-300 truncate max-w-[180px]">{undoToast.filename || 'Photo'} moved to trash</span>
+          <button
+            onClick={() => {
+              handleStatusChange(undoToast.photoId, undoToast.prevStatus);
+              setUndoToast(null);
+            }}
+            className="font-semibold text-indigo-300 hover:text-white transition-colors"
+          >
+            Undo
+          </button>
+        </div>
+      )}
+
       {/* ── Bottom bar ── */}
       <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-3 shadow-lg">
         <div className="max-w-7xl mx-auto flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-4">
             <p className="text-sm text-gray-600">
-              {trashed > 0
-                ? `${trashed} in trash · ${formatBytes(trashedSize)} to free`
-                : 'Review suggestions, then download your cleaned library'}
+              {session.finalizedAt
+                ? `Done · ${photos.length - trashed} kept`
+                : trashed > 0
+                ? `${photos.length - trashed} keeping · ${trashed} in trash · ${formatBytes(trashedSize)} to free`
+                : `${photos.length} photos · review suggestions above`}
             </p>
             <span className="hidden sm:inline text-xs text-gray-400 border border-gray-200 rounded px-2 py-0.5">
               Hover + <kbd className="font-mono">K</kbd> keep · <kbd className="font-mono">T</kbd> trash
             </span>
           </div>
           <div className="flex items-center gap-2">
-            {trashed > 0 && !session.finalizedAt && (
+            {session.finalizedAt ? (
+              <button
+                onClick={() => window.open(`/api/sessions/${sessionId}/download`, '_blank')}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
+              >
+                Download kept photos
+              </button>
+            ) : (
               <button
                 onClick={() => setShowFinalizeModal(true)}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+                className="px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors"
               >
-                Delete {trashed} forever
+                Finish →
               </button>
             )}
-            <button
-              onClick={() => window.open(`/api/sessions/${sessionId}/download`, '_blank')}
-              className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
-            >
-              Download Kept ({photos.length - trashed})
-            </button>
           </div>
         </div>
       </div>
@@ -1142,6 +1142,7 @@ export default function ReviewPage() {
       {showFinalizeModal && (
         <FinalizeModal
           trashedPhotos={photos.filter((p) => p.status === 'trash')}
+          keptCount={photos.length - trashed}
           sessionId={sessionId}
           onClose={() => setShowFinalizeModal(false)}
           onDone={(result) => {

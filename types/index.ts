@@ -150,9 +150,9 @@ export const AGGRESSIVENESS_CONFIG: Record<number, AggressivenessConfig> = {
 };
 
 export const AGGRESSIVENESS_LABELS: Record<number, { label: string; description: string; expert?: boolean }> = {
-  1: { label: 'Minimal',     description: 'No suggestions — manual review only' },
-  2: { label: 'Light',       description: 'Burst duplicates only (≤3 sec apart)' },
-  3: { label: 'Balanced',    description: 'Near-duplicates + screenshots & receipts' },
-  4: { label: 'Aggressive',  description: 'Broad duplicates + memes & low-quality photos', expert: true },
-  5: { label: 'Nuclear',     description: 'Maximum cleanup — keep one of every similar scene', expert: true },
+  1: { label: 'Manual only',     description: 'No suggestions — browse and decide yourself' },
+  2: { label: 'Duplicates only', description: 'Flag near-identical burst shots taken within seconds' },
+  3: { label: 'Standard',        description: 'Duplicates + screenshots, receipts & documents' },
+  4: { label: 'Deep clean',      description: 'Broad duplicates + memes & low-quality photos', expert: true },
+  5: { label: 'Maximum',         description: 'Keep one of every similar scene — maximum cleanup', expert: true },
 };

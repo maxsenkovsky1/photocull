@@ -2,8 +2,15 @@ import { NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import path from 'path';
+import { pipeline } from 'stream/promises';
+import { Readable } from 'stream';
 import { readSession, writeSession, getOriginalPath, getMetadataDir, ensureSessionDirs } from '@/lib/storage';
 import type { Photo } from '@/types';
+
+export const maxDuration = 60;
+
+// Disable Next.js body size limit for this route — files are streamed directly to disk
+export const dynamic = 'force-dynamic';
 
 const ACCEPTED_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.heic', '.heif', '.webp', '.gif', '.tiff', '.tif']);
 
@@ -13,45 +20,53 @@ export async function POST(
 ) {
   const { sessionId } = await params;
 
-  const session = readSession(sessionId);
-  if (!session) {
-    return NextResponse.json({ error: 'Session not found' }, { status: 404 });
-  }
-
-  ensureSessionDirs(sessionId);
-
-  const formData = await request.formData();
-  const files = formData.getAll('files') as File[];
-
-  // First pass: collect JSON sidecars and save them to the metadata directory
-  // Google Photos exports sidecars named "photo.jpg.json" (full filename + .json)
-  for (const file of files) {
-    if (path.extname(file.name).toLowerCase() === '.json') {
-      const metaDir = getMetadataDir(sessionId);
-      const metaPath = path.join(metaDir, file.name);
-      const arrayBuffer = await file.arrayBuffer();
-      fs.writeFileSync(metaPath, Buffer.from(arrayBuffer));
+  try {
+    const session = readSession(sessionId);
+    if (!session) {
+      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
-  }
 
-  // Second pass: process image files
-  const uploaded: Pick<Photo, 'id' | 'filename' | 'ext' | 'fileSize'>[] = [];
+    ensureSessionDirs(sessionId);
 
-  for (const file of files) {
-    const ext = path.extname(file.name).toLowerCase();
-    if (!ACCEPTED_IMAGE_EXTENSIONS.has(ext)) continue;
+    // Read filename and size from query params — file body is raw binary
+    const url = new URL(request.url);
+    const filename = url.searchParams.get('filename') ?? '';
+    const fileSize = parseInt(url.searchParams.get('size') ?? '0', 10);
+    const ext = path.extname(filename).toLowerCase();
+
+    // JSON sidecar
+    if (ext === '.json') {
+      const metaDir = getMetadataDir(sessionId);
+      const metaPath = path.join(metaDir, filename);
+      const buf = Buffer.from(await request.arrayBuffer());
+      fs.writeFileSync(metaPath, buf);
+      return NextResponse.json({ uploaded: [], total: session.photos.length });
+    }
+
+    if (!ACCEPTED_IMAGE_EXTENSIONS.has(ext)) {
+      return NextResponse.json({ uploaded: [], total: session.photos.length });
+    }
 
     const photoId = uuidv4();
     const filePath = getOriginalPath(sessionId, photoId, ext);
 
-    const arrayBuffer = await file.arrayBuffer();
-    fs.writeFileSync(filePath, Buffer.from(arrayBuffer));
+    // Stream body directly to disk — no buffering in memory
+    if (!request.body) {
+      return NextResponse.json({ error: 'Empty request body' }, { status: 400 });
+    }
+    try {
+      const writeStream = fs.createWriteStream(filePath);
+      await pipeline(Readable.fromWeb(request.body as import('stream/web').ReadableStream), writeStream);
+    } catch (err) {
+      console.error(`[upload] failed to stream file ${filename}:`, err);
+      return NextResponse.json({ error: `Failed to save file: ${filename}` }, { status: 500 });
+    }
 
     const photo: Photo = {
       id: photoId,
-      filename: file.name,
+      filename,
       ext,
-      fileSize: file.size,
+      fileSize,
       width: null,
       height: null,
       takenAt: null,
@@ -70,11 +85,12 @@ export async function POST(
     };
 
     session.photos.push(photo);
-    uploaded.push({ id: photoId, filename: file.name, ext, fileSize: file.size });
+    session.status = 'uploading';
+    writeSession(session);
+
+    return NextResponse.json({ uploaded: [{ id: photoId, filename, ext, fileSize }], total: session.photos.length });
+  } catch (err) {
+    console.error('[upload] unexpected error:', err);
+    return NextResponse.json({ error: 'Unexpected server error during upload' }, { status: 500 });
   }
-
-  session.status = 'uploading';
-  writeSession(session);
-
-  return NextResponse.json({ uploaded, total: session.photos.length });
 }

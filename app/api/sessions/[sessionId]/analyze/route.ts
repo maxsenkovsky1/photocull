@@ -60,6 +60,8 @@ export async function POST(
         fs.mkdirSync(getThumbnailsDir(sessionId), { recursive: true });
         fs.writeFileSync(getThumbnailPath(sessionId, photo.id), thumbnailBuffer);
       }
+    } catch (err) {
+      console.error(`[analyze] skipping ${photo.filename} — processing failed:`, err);
     } finally {
       cleanup();
     }
@@ -77,8 +79,8 @@ export async function POST(
       } catch { /* ignore malformed sidecar */ }
     }
 
-    session.analysisProgress = Math.round(((i + 1) / total) * 35);
-    session.analysisStage = `Stage 1/2: Processing images… (${i + 1}/${total})`;
+    session.analysisProgress = Math.max(1, Math.round(((i + 1) / total) * 35));
+    session.analysisStage = `Processing images… (${i + 1}/${total})`;
     writeSession(session);
   }
 
@@ -203,10 +205,10 @@ export async function POST(
       }
     }
 
-    session.analysisProgress = 35 + Math.round(((i + 1) / total) * 50);
+    session.analysisProgress = 35 + Math.round(((i + 1) / total) * 55);
     session.analysisStage    = session.skipAI
-      ? `Skipping AI (${i + 1}/${total})`
-      : `Stage 2/2: Classifying with AI… (${i + 1}/${total})`;
+      ? `Skipping AI… (${i + 1}/${total})`
+      : `Classifying with AI… (${i + 1}/${total})`;
     writeSession(session);
   }
 

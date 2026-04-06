@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
-import path from 'path';
-import { readSession, getOriginalPath, getThumbnailPath } from '@/lib/storage';
+import { readSession, getOriginalPath, getThumbnailPath, getThumbnailsDir } from '@/lib/storage';
+import { generateThumbnail, prepareForSharp } from '@/lib/analysis';
 
 const MIME_TYPES: Record<string, string> = {
   '.jpg': 'image/jpeg',
@@ -31,25 +31,57 @@ export async function GET(
     return new NextResponse('Not found', { status: 404 });
   }
 
-  let filePath: string;
-  let contentType: string;
+  const originalPath = getOriginalPath(sessionId, photoId, photo.ext);
 
   if (type === 'thumb') {
-    filePath = getThumbnailPath(sessionId, photoId);
-    contentType = 'image/jpeg';
-  } else {
-    filePath = getOriginalPath(sessionId, photoId, photo.ext);
-    contentType = MIME_TYPES[photo.ext] ?? 'image/jpeg';
-  }
+    const thumbPath = getThumbnailPath(sessionId, photoId);
 
-  if (!fs.existsSync(filePath)) {
+    // Serve cached thumbnail if it exists
+    if (fs.existsSync(thumbPath)) {
+      const buffer = fs.readFileSync(thumbPath);
+      return new NextResponse(new Uint8Array(buffer), {
+        headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600' },
+      });
+    }
+
+    // Thumbnail missing — try to generate it on-demand now
+    if (fs.existsSync(originalPath)) {
+      const { processPath, cleanup } = await prepareForSharp(originalPath);
+      try {
+        const thumbBuf = await generateThumbnail(processPath);
+        if (thumbBuf) {
+          fs.mkdirSync(getThumbnailsDir(sessionId), { recursive: true });
+          fs.writeFileSync(thumbPath, thumbBuf);
+          return new NextResponse(new Uint8Array(thumbBuf), {
+            headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600' },
+          });
+        }
+      } finally {
+        cleanup();
+      }
+
+      // generateThumbnail also failed — stream the original so the card isn't blank
+      const buffer = fs.readFileSync(originalPath);
+      return new NextResponse(new Uint8Array(buffer), {
+        headers: {
+          'Content-Type': MIME_TYPES[photo.ext] ?? 'image/jpeg',
+          'Cache-Control': 'private, max-age=60',
+        },
+      });
+    }
+
     return new NextResponse('Image not found', { status: 404 });
   }
 
-  const buffer = fs.readFileSync(filePath);
-  return new NextResponse(buffer, {
+  // Original / full-size request
+  if (!fs.existsSync(originalPath)) {
+    return new NextResponse('Image not found', { status: 404 });
+  }
+
+  const buffer = fs.readFileSync(originalPath);
+  return new NextResponse(new Uint8Array(buffer), {
     headers: {
-      'Content-Type': contentType,
+      'Content-Type': MIME_TYPES[photo.ext] ?? 'image/jpeg',
       'Cache-Control': 'private, max-age=3600',
     },
   });

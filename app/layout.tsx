@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Winnow — Delete the clutter. Keep the memories.",
+  title: "Shortlist — Delete the clutter. Keep the memories.",
   description: "AI-powered photo cleanup. Remove duplicates, blurry shots, and clutter in minutes.",
 };
 
