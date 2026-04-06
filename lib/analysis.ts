@@ -217,7 +217,7 @@ export async function generateThumbnail(input: string | Buffer): Promise<Buffer 
       .jpeg({ quality: 80 })
       .toBuffer();
   } catch (err) {
-    console.error(`[thumbnail] Sharp failed for ${imagePath}:`, err);
+    console.error(`[thumbnail] Sharp failed for ${typeof input === 'string' ? input : 'buffer'}:`, err);
   }
 
   // 2. Fallback: sips (macOS built-in — handles large PNGs, HEIC, TIFF reliably)
