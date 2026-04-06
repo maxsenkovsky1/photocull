@@ -6,6 +6,26 @@ import type { PhotoClassification } from '@/types';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// Retry an API call with exponential backoff on rate limit (429) errors
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 4): Promise<T> {
+  let delay = 2000;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      const status = (err as { status?: number })?.status;
+      if (status === 429 && attempt < maxAttempts) {
+        console.warn(`[claude] rate limited, retrying in ${delay}ms (attempt ${attempt}/${maxAttempts})`);
+        await new Promise((res) => setTimeout(res, delay));
+        delay *= 2;
+      } else {
+        throw err;
+      }
+    }
+  }
+  throw new Error('Max retries exceeded');
+}
+
 export interface ClassificationResult {
   classification: PhotoClassification;
   qualityScore: number;
@@ -160,7 +180,7 @@ export async function classifyPhoto(
       .toBuffer();
     const base64 = resized.toString('base64');
 
-    const response = await client.messages.create({
+    const response = await withRetry(() => client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 300,
       system: SYSTEM_PROMPT,
@@ -173,7 +193,7 @@ export async function classifyPhoto(
           ],
         },
       ],
-    });
+    }));
 
     const text = response.content[0].type === 'text' ? response.content[0].text.trim() : '';
     const clean = text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
@@ -225,12 +245,12 @@ export async function classifyPhotoBatch(
     }
     content.push({ type: 'text', text: BATCH_USER_PROMPT });
 
-    const response = await client.messages.create({
+    const response = await withRetry(() => client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 300 * photos.length,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content }],
-    });
+    }));
 
     const text = response.content[0].type === 'text' ? response.content[0].text.trim() : '';
     const clean = text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();

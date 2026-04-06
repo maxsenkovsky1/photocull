@@ -229,7 +229,7 @@ export async function POST(
     batches.push(claudeQueue.slice(i, i + BATCH_SIZE));
   }
 
-  await runConcurrent(batches, 3, async (batch) => {
+  await runConcurrent(batches, 2, async (batch) => {
     const batchInput = batch.map((p) => ({
       thumbnailPath: getThumbnailPath(sessionId, p.id),
       phash: p.phash,

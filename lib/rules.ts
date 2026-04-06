@@ -235,9 +235,13 @@ export function applyRules(
     : config.duplicateTimeWindowMinutes;
 
   if (hammingThreshold > 0) {
-    const photoHashes = photos.map((p) => ({
-      id: p.id, phash: p.phash, takenAt: p.takenAt, filename: p.filename,
-    }));
+    // Only group real photos as duplicates — screenshots, receipts, memes etc.
+    // are never duplicates of each other or of real photos
+    const photoHashes = photos
+      .filter((p) => !NON_PHOTO_CLASSIFICATIONS.has(p.classification ?? ''))
+      .map((p) => ({
+        id: p.id, phash: p.phash, takenAt: p.takenAt, filename: p.filename,
+      }));
     const groupMap = groupDuplicatesWithTime(photoHashes, hammingThreshold, timeWindowMinutes);
 
     const groupMembers = new Map<string, string[]>();
