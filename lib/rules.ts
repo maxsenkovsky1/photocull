@@ -92,6 +92,9 @@ export function buildAdaptiveConfig(config: AggressivenessConfig, p: BlurPercent
 
 // ─── Best photo in duplicate group ───────────────────────────────────────────
 
+// Classifications that should never be picked as the best in a duplicate group
+const NON_PHOTO_CLASSIFICATIONS = new Set(['screenshot', 'receipt', 'document', 'meme', 'other']);
+
 export function pickBestInGroup(members: Photo[]): string {
   // Favorites always win in their group
   const favs = members.filter((m) => m.isFavorite);
@@ -101,17 +104,21 @@ export function pickBestInGroup(members: Photo[]): string {
   const userKept = members.filter((m) => m.status === 'keep');
   if (userKept.length === 1) return userKept[0].id;
 
-  const maxFace = Math.max(...members.map((m) => m.faceScore ?? 0));
+  // Prefer real photos over screenshots/receipts/memes when picking the best
+  const realPhotos = members.filter((m) => !NON_PHOTO_CLASSIFICATIONS.has(m.classification ?? ''));
+  const candidates = realPhotos.length > 0 ? realPhotos : members;
+
+  const maxFace = Math.max(...candidates.map((m) => m.faceScore ?? 0));
   let faceW: number, blurW: number, qualityW: number;
   if (maxFace >= 65)      { faceW = 0.50; blurW = 0.25; qualityW = 0.25; }
   else if (maxFace >= 30) { faceW = 0.30; blurW = 0.35; qualityW = 0.35; }
   else                    { faceW = 0.10; blurW = 0.45; qualityW = 0.45; }
 
-  const maxBlur = Math.max(...members.map((m) => m.blurScore ?? 0));
-  let bestId = members[0].id;
+  const maxBlur = Math.max(...candidates.map((m) => m.blurScore ?? 0));
+  let bestId = candidates[0].id;
   let bestScore = -1;
 
-  for (const m of members) {
+  for (const m of candidates) {
     const normBlur = maxBlur > 0 ? ((m.blurScore ?? 0) / maxBlur) * 100 : 50;
     const composite = normBlur * blurW + (m.qualityScore ?? 50) * qualityW + (m.faceScore ?? 0) * faceW;
     if (composite > bestScore) { bestScore = composite; bestId = m.id; }
@@ -127,11 +134,13 @@ export function getSuggestedDeleteReason(
   cat: PhotoCategoryConfig,
 ): DeleteReason {
   if (photo.isFavorite) return null;
-  if (cat.removeDuplicates && photo.duplicateGroupId && !photo.isDuplicateBest) return 'duplicate';
-  if (cat.removeBlurry && config.blurThreshold > 0 && photo.blurScore !== null && photo.blurScore < config.blurThreshold) return 'blurry';
+  // Classification-based reasons take priority over duplicate — a screenshot is
+  // always a screenshot, even if it's also visually similar to another photo.
   if (cat.removeScreenshots && config.includeScreenshots && photo.classification === 'screenshot') return 'screenshot';
   if (cat.removeReceipts && config.includeReceipts && (photo.classification === 'receipt' || photo.classification === 'document')) return 'receipt';
   if (cat.removeMemes && config.includeMemes && photo.classification === 'meme') return 'meme';
+  if (cat.removeDuplicates && photo.duplicateGroupId && !photo.isDuplicateBest) return 'duplicate';
+  if (cat.removeBlurry && config.blurThreshold > 0 && photo.blurScore !== null && photo.blurScore < config.blurThreshold) return 'blurry';
   if (cat.removeLowQuality && config.includeLowQuality && !photo.isDuplicateBest) {
     if (photo.qualityScore !== null && photo.qualityScore < config.qualityThreshold) return 'low_quality';
     if (photo.sentimentScore !== null && photo.sentimentScore < config.sentimentThreshold) return 'low_quality';

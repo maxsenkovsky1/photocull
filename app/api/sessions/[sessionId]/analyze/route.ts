@@ -208,9 +208,13 @@ export async function POST(
   session.analysisProgress = 35 + Math.round((stage2Done / total) * 55);
   writeSession(session);
 
-  // Process Claude queue in batches of 4
+  // Split Claude queue into batches of 4, then run 3 batches concurrently
+  const batches: Photo[][] = [];
   for (let i = 0; i < claudeQueue.length; i += BATCH_SIZE) {
-    const batch = claudeQueue.slice(i, i + BATCH_SIZE);
+    batches.push(claudeQueue.slice(i, i + BATCH_SIZE));
+  }
+
+  await runConcurrent(batches, 3, async (batch) => {
     const batchInput = batch.map((p) => ({
       thumbnailPath: getThumbnailPath(sessionId, p.id),
       phash: p.phash,
@@ -233,7 +237,7 @@ export async function POST(
     session.analysisProgress = 35 + Math.round((stage2Done / total) * 55);
     session.analysisStage    = `Classifying with AI… (${stage2Done}/${total})`;
     writeSession(session);
-  }
+  });
 
   // Copy cluster rep scores to skipped duplicate members
   for (const [groupId, repId] of clusterRepMap.entries()) {
