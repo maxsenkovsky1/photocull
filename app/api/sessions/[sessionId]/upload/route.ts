@@ -8,8 +8,6 @@ import { readSession, writeSession, getOriginalPath, getMetadataDir, ensureSessi
 import type { Photo } from '@/types';
 
 export const maxDuration = 60;
-
-// Disable Next.js body size limit for this route — files are streamed directly to disk
 export const dynamic = 'force-dynamic';
 
 const ACCEPTED_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.heic', '.heif', '.webp', '.gif', '.tiff', '.tif']);
@@ -28,7 +26,6 @@ export async function POST(
 
     ensureSessionDirs(sessionId);
 
-    // Read filename and size from query params — file body is raw binary
     const url = new URL(request.url);
     const filename = url.searchParams.get('filename') ?? '';
     const fileSize = parseInt(url.searchParams.get('size') ?? '0', 10);
@@ -47,19 +44,35 @@ export async function POST(
       return NextResponse.json({ uploaded: [], total: session.photos.length });
     }
 
-    const photoId = uuidv4();
-    const filePath = getOriginalPath(sessionId, photoId, ext);
-
-    // Stream body directly to disk — no buffering in memory
     if (!request.body) {
       return NextResponse.json({ error: 'Empty request body' }, { status: 400 });
     }
+
+    const photoId = uuidv4();
+    const filePath = getOriginalPath(sessionId, photoId, ext);
+
+    // Try streaming to disk first (memory-efficient for large files)
+    let saved = false;
     try {
       const writeStream = fs.createWriteStream(filePath);
       await pipeline(Readable.fromWeb(request.body as import('stream/web').ReadableStream), writeStream);
-    } catch (err) {
-      console.error(`[upload] failed to stream file ${filename}:`, err);
-      return NextResponse.json({ error: `Failed to save file: ${filename}` }, { status: 500 });
+      saved = true;
+    } catch (streamErr) {
+      console.warn(`[upload] stream failed for ${filename}, retrying with buffer:`, streamErr);
+      // Clean up partial file if it exists
+      try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+    }
+
+    // Fallback: buffer the whole file (works when streaming pipeline fails)
+    if (!saved) {
+      try {
+        const buf = Buffer.from(await request.arrayBuffer());
+        fs.writeFileSync(filePath, buf);
+        saved = true;
+      } catch (bufErr) {
+        console.error(`[upload] buffer fallback also failed for ${filename}:`, bufErr);
+        return NextResponse.json({ error: `Failed to save file: ${filename}` }, { status: 500 });
+      }
     }
 
     const photo: Photo = {

@@ -180,6 +180,31 @@ export default function UploadPage() {
     return () => clearInterval(interval);
   }, [phase, router]);
 
+  // Convert HEIC/HEIF to JPEG in the browser using the native canvas API.
+  // macOS Safari + Chrome both support HEIC natively — no WASM needed.
+  const convertHeicToJpeg = useCallback(async (file: File): Promise<File> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { URL.revokeObjectURL(url); resolve(file); return; }
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob((blob) => {
+          URL.revokeObjectURL(url);
+          if (!blob) { resolve(file); return; }
+          const jpegName = file.name.replace(/\.(heic|heif)$/i, '.jpg');
+          resolve(new File([blob], jpegName, { type: 'image/jpeg' }));
+        }, 'image/jpeg', 0.88);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    });
+  }, []);
+
   const addFiles = useCallback((newFiles: File[]) => {
     const images = newFiles.filter((f) => /\.(jpe?g|png|heic|heif|webp|gif|tiff?|json)$/i.test(f.name));
     setFiles((prev) => {
@@ -231,7 +256,12 @@ export default function UploadPage() {
     let done = 0;
     setUploadProgress({ done: 0, total: files.length });
     for (let i = 0; i < files.length; i += 1) {
-      const file = files[i];
+      // Convert HEIC/HEIF → JPEG in the browser before uploading
+      // (server has no HEIC decoder on Linux)
+      let file = files[i];
+      if (/\.(heic|heif)$/i.test(file.name)) {
+        file = await convertHeicToJpeg(file);
+      }
       const url = `/api/sessions/${sessionId}/upload?filename=${encodeURIComponent(file.name)}&size=${file.size}`;
       const uploadRes = await fetch(url, {
         method: 'POST',
