@@ -198,9 +198,6 @@ export async function POST(
       photo.description    = '';
       skippedLocal++;
       stage2Done++;
-    } else if (skippedDupIds.has(photo.id)) {
-      skippedDup++;
-      stage2Done++;
     } else if (!session.skipAI && fs.existsSync(getThumbnailPath(sessionId, photo.id))) {
       const cached = getCachedResult(photo.phash);
       if (cached) {
@@ -254,18 +251,21 @@ export async function POST(
     writeSession(session);
   });
 
-  // Copy cluster rep scores to skipped duplicate members
+  // For skipped dup members that weren't classified (no thumbnail), copy
+  // only quality scores from the rep — never classification, since a
+  // skipped dup could be a screenshot that must keep its own identity.
   for (const [groupId, repId] of clusterRepMap.entries()) {
     const rep = session.photos.find((p) => p.id === repId);
     if (!rep) continue;
     for (const photo of session.photos) {
       if (!skippedDupIds.has(photo.id)) continue;
       if (!(prelimGroups.get(groupId) ?? []).includes(photo.id)) continue;
-      photo.classification = rep.classification;
+      if (photo.qualityScore !== null) continue; // already classified — don't overwrite
       photo.qualityScore   = rep.qualityScore;
       photo.sentimentScore = rep.sentimentScore;
       photo.faceScore      = rep.faceScore;
       photo.description    = rep.description;
+      // classification intentionally NOT copied — each photo keeps its own
     }
   }
 
