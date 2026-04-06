@@ -125,6 +125,13 @@ are present but the main subject looks away or is unsmiling.
 ── description ──
 One brief sentence describing the photo's content (e.g. "Woman smiling at outdoor birthday party").`;
 
+// ─── Batch prompt ────────────────────────────────────────────────────────────
+
+const BATCH_USER_PROMPT = `Analyze each numbered photo and return a JSON array — one object per photo, in the same order.
+Each object must have exactly these fields (same scoring rules as for a single photo):
+{ "classification": <string>, "quality_score": <int 0-100>, "sentiment_score": <int 0-100>, "face_score": <int 0-100>, "description": <string> }
+Return ONLY the JSON array. No markdown, no explanation.`;
+
 // ─── Main classify function ───────────────────────────────────────────────────
 
 export async function classifyPhoto(
@@ -187,6 +194,66 @@ export async function classifyPhoto(
   } catch (err) {
     console.error('[classifyPhoto] Failed:', err instanceof Error ? err.message : err);
     return fallback;
+  }
+}
+
+// ─── Batch classify (4 images per API call) ──────────────────────────────────
+
+export async function classifyPhotoBatch(
+  photos: Array<{ thumbnailPath: string; phash?: string | null }>,
+): Promise<ClassificationResult[]> {
+  if (photos.length === 0) return [];
+  if (photos.length === 1) return [await classifyPhoto(photos[0].thumbnailPath, photos[0].phash)];
+
+  try {
+    // Resize all photos to 200×200 in parallel
+    const base64Images = await Promise.all(
+      photos.map(({ thumbnailPath }) =>
+        sharp(thumbnailPath)
+          .resize(200, 200, { fit: 'inside' })
+          .jpeg({ quality: 75 })
+          .toBuffer()
+          .then((buf) => buf.toString('base64')),
+      ),
+    );
+
+    // Interleave: image, label, image, label, …, then the prompt
+    const content: Anthropic.Messages.ContentBlockParam[] = [];
+    for (let i = 0; i < base64Images.length; i++) {
+      content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64Images[i] } });
+      content.push({ type: 'text', text: `Photo ${i + 1}:` });
+    }
+    content.push({ type: 'text', text: BATCH_USER_PROMPT });
+
+    const response = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 300 * photos.length,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content }],
+    });
+
+    const text = response.content[0].type === 'text' ? response.content[0].text.trim() : '';
+    const clean = text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+    const parsed = JSON.parse(clean) as Record<string, unknown>[];
+
+    if (!Array.isArray(parsed) || parsed.length !== photos.length) {
+      throw new Error(`Expected array of ${photos.length}, got ${Array.isArray(parsed) ? parsed.length : typeof parsed}`);
+    }
+
+    return parsed.map((item, i) => {
+      const result: ClassificationResult = {
+        classification: (item.classification as PhotoClassification) ?? 'photo',
+        qualityScore:   clamp(parseInt(String(item.quality_score))   || 50),
+        sentimentScore: clamp(parseInt(String(item.sentiment_score)) || 50),
+        faceScore:      clamp(parseInt(String(item.face_score))      || 0),
+        description:    String(item.description ?? '').slice(0, 200),
+      };
+      if (photos[i].phash) setCachedResult(photos[i].phash!, result);
+      return result;
+    });
+  } catch (err) {
+    console.error('[classifyPhotoBatch] failed, falling back to individual calls:', err instanceof Error ? err.message : err);
+    return Promise.all(photos.map(({ thumbnailPath, phash }) => classifyPhoto(thumbnailPath, phash)));
   }
 }
 
