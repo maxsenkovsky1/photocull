@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /Users/max/photocull && npx -p typescript tsc --noEmit 2>&1 | head -30",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

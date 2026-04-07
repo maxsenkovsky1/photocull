@@ -104,10 +104,13 @@ export default function UploadPage() {
     return () => clearInterval(interval);
   }, [phase, router]);
 
-  // Convert HEIC/HEIF to JPEG in the browser using the native canvas API.
-  // macOS Safari + Chrome both support HEIC natively — no WASM needed.
+  // Convert HEIC/HEIF to JPEG in the browser if possible (Safari supports it
+  // natively via canvas). On browsers that can't decode HEIC (Chrome, Firefox),
+  // the file is uploaded as-is and the server handles conversion.
   const convertHeicToJpeg = useCallback(async (file: File): Promise<File> => {
-    return new Promise((resolve) => {
+    const jpegName = file.name.replace(/\.(heic|heif)$/i, '.jpg');
+
+    const result = await new Promise<File | null>((resolve) => {
       const img = new Image();
       const url = URL.createObjectURL(file);
       img.onload = () => {
@@ -115,18 +118,19 @@ export default function UploadPage() {
         canvas.width = img.naturalWidth;
         canvas.height = img.naturalHeight;
         const ctx = canvas.getContext('2d');
-        if (!ctx) { URL.revokeObjectURL(url); resolve(file); return; }
+        if (!ctx) { URL.revokeObjectURL(url); resolve(null); return; }
         ctx.drawImage(img, 0, 0);
         canvas.toBlob((blob) => {
           URL.revokeObjectURL(url);
-          if (!blob) { resolve(file); return; }
-          const jpegName = file.name.replace(/\.(heic|heif)$/i, '.jpg');
+          if (!blob || blob.size < 1000) { resolve(null); return; }
           resolve(new File([blob], jpegName, { type: 'image/jpeg' }));
         }, 'image/jpeg', 0.88);
       };
-      img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
       img.src = url;
     });
+
+    return result ?? file; // upload as-is if browser can't decode
   }, []);
 
   const addFiles = useCallback((newFiles: File[]) => {
@@ -176,31 +180,47 @@ export default function UploadPage() {
     const { id: sessionId } = await sessionRes.json();
     sessionIdRef.current = sessionId;
 
-    // Upload one file at a time as raw binary — avoids multipart body size limits
+    // Upload files in parallel (5 concurrent) — each as raw binary to avoid body size limits
     let done = 0;
+    let uploadError = '';
     setUploadProgress({ done: 0, total: files.length });
-    for (let i = 0; i < files.length; i += 1) {
-      // Convert HEIC/HEIF → JPEG in the browser before uploading
-      // (server has no HEIC decoder on Linux)
-      let file = files[i];
-      if (/\.(heic|heif)$/i.test(file.name)) {
-        file = await convertHeicToJpeg(file);
+
+    const UPLOAD_CONCURRENCY = 5;
+    const queue = files.map((f, i) => ({ file: f, index: i }));
+    const uploadWorker = async () => {
+      while (queue.length > 0 && !uploadError) {
+        const item = queue.shift();
+        if (!item) break;
+        let file = item.file;
+        // Convert HEIC/HEIF → JPEG in the browser if possible
+        if (/\.(heic|heif)$/i.test(file.name)) {
+          file = await convertHeicToJpeg(file);
+        }
+        const url = `/api/sessions/${sessionId}/upload?filename=${encodeURIComponent(file.name)}&size=${file.size}`;
+        const uploadRes = await fetch(url, {
+          method: 'POST',
+          body: file,
+          headers: { 'Content-Type': 'application/octet-stream' },
+        });
+        if (!uploadRes.ok) {
+          let msg = `Upload failed on file ${item.index + 1}/${files.length} (${file.name})`;
+          try { const body = await uploadRes.json(); if (body.error) msg += `: ${body.error}`; } catch { /* ignore */ }
+          uploadError = msg;
+          return;
+        }
+        done += 1;
+        setUploadProgress({ done, total: files.length });
       }
-      const url = `/api/sessions/${sessionId}/upload?filename=${encodeURIComponent(file.name)}&size=${file.size}`;
-      const uploadRes = await fetch(url, {
-        method: 'POST',
-        body: file,
-        headers: { 'Content-Type': 'application/octet-stream' },
-      });
-      if (!uploadRes.ok) {
-        let msg = `Upload failed on file ${i + 1}/${files.length} (${file.name})`;
-        try { const body = await uploadRes.json(); if (body.error) msg += `: ${body.error}`; } catch { /* ignore */ }
-        setError(msg);
-        setPhase('idle');
-        return;
-      }
-      done += 1;
-      setUploadProgress({ done, total: files.length });
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(UPLOAD_CONCURRENCY, files.length) }, () => uploadWorker()),
+    );
+
+    if (uploadError) {
+      setError(uploadError);
+      setPhase('idle');
+      return;
     }
 
     // Start analysis (long-running). Polling useEffect will track progress.

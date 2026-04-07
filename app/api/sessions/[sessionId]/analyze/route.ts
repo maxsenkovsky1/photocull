@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import sharp from 'sharp';
 import { readSessionFromDb, writeSessionToDb, updateSessionProgress } from '@/lib/storage-db';
 import { getObject, uploadObject, thumbnailKey as makeThumbnailKey } from '@/lib/object-storage';
 import {
   computePhash, computeBlurScore, generateThumbnail,
-  extractMetadataFromBuffer, detectContentLocally,
+  extractMetadataFromBuffer, detectContentLocally, prepareForSharp,
 } from '@/lib/analysis';
 import { classifyPhotoBatchFromBuffers, getCachedResult } from '@/lib/claude';
 import { applyRules, groupDuplicatesWithTime } from '@/lib/rules';
@@ -67,16 +70,37 @@ export async function POST(
       return; // file not in R2
     }
 
+    // For HEIC/HEIF files, Sharp may not decode directly from a buffer.
+    // Write to a temp file and use prepareForSharp (sips on macOS) to convert.
+    let processBuffer: Buffer = originalBuffer;
+    let tempCleanup: (() => void) | null = null;
+
+    const isHeic = /\.(heic|heif)$/i.test(photo.ext);
+    if (isHeic) {
+      const tmpPath = path.join(os.tmpdir(), `shortlist_${photo.id}${photo.ext}`);
+      fs.writeFileSync(tmpPath, originalBuffer);
+      try {
+        const { processPath, cleanup } = await prepareForSharp(tmpPath);
+        tempCleanup = () => { cleanup(); try { fs.unlinkSync(tmpPath); } catch {} };
+        const converted = fs.readFileSync(processPath);
+        console.log(`[analyze] HEIC ${photo.filename}: sips converted ${originalBuffer.length} → ${converted.length} bytes (path: ${processPath})`);
+        processBuffer = converted;
+      } catch (heicErr) {
+        console.error(`[analyze] HEIC conversion failed for ${photo.filename}:`, heicErr);
+        tempCleanup = () => { try { fs.unlinkSync(tmpPath); } catch {} };
+      }
+    }
+
     try {
       // Decode the original into a 512px working buffer
-      const workingBuffer = await sharp(originalBuffer, { limitInputPixels: false, sequentialRead: true })
+      const workingBuffer = await sharp(processBuffer, { limitInputPixels: false, sequentialRead: true })
         .rotate()
         .resize(512, 512, { fit: 'inside', withoutEnlargement: true })
         .jpeg({ quality: 90 })
         .toBuffer();
 
       const [meta, blurScore, phash, thumbnailBuffer] = await Promise.all([
-        extractMetadataFromBuffer(originalBuffer),
+        extractMetadataFromBuffer(originalBuffer), // use original for EXIF
         computeBlurScore(workingBuffer),
         computePhash(workingBuffer),
         generateThumbnail(workingBuffer),
@@ -94,7 +118,9 @@ export async function POST(
         thumbnailBuffers.set(photo.id, thumbnailBuffer);
       }
     } catch (err) {
-      console.error(`[analyze] skipping ${photo.filename} — processing failed:`, err);
+      console.error(`[analyze] skipping ${photo.filename} — processing failed:`, err instanceof Error ? err.message : err);
+    } finally {
+      if (tempCleanup) tempCleanup();
     }
 
     // Google Photos sidecar JSON
