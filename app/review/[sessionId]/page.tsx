@@ -748,6 +748,7 @@ export default function ReviewPage() {
     const grouped = new Map<string, Photo[]>();
     for (const p of photos) {
       if (!p.duplicateGroupId) continue;
+      if (p.classification === 'screenshot' || p.classification === 'receipt' || p.classification === 'meme' || p.classification === 'document') continue;
       if (!grouped.has(p.duplicateGroupId)) grouped.set(p.duplicateGroupId, []);
       grouped.get(p.duplicateGroupId)!.push(p);
     }

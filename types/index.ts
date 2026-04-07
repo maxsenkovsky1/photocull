@@ -38,11 +38,11 @@ export interface PhotoCategoryConfig {
 
 export const DEFAULT_CATEGORY_CONFIG: PhotoCategoryConfig = {
   removeDuplicates: true,
-  removeBlurry: false,       // off by default — blur alone is not a reliable signal
+  removeBlurry: true,
   removeScreenshots: true,
   removeReceipts: true,
-  removeMemes: false,
-  removeLowQuality: false,
+  removeMemes: true,
+  removeLowQuality: true,
 };
 
 /** Immutable record of every destructive action taken in a session */
