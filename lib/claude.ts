@@ -6,6 +6,16 @@ import type { PhotoClassification } from '@/types';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// Reject after ms milliseconds
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Claude API timeout after ${ms}ms`)), ms),
+    ),
+  ]);
+}
+
 // Retry an API call with exponential backoff on rate limit (429) errors
 async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 4): Promise<T> {
   let delay = 2000;
@@ -180,7 +190,7 @@ export async function classifyPhoto(
       .toBuffer();
     const base64 = resized.toString('base64');
 
-    const response = await withRetry(() => client.messages.create({
+    const response = await withRetry(() => withTimeout(client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 300,
       system: SYSTEM_PROMPT,
@@ -193,7 +203,7 @@ export async function classifyPhoto(
           ],
         },
       ],
-    }));
+    }), 45_000));
 
     const text = response.content[0].type === 'text' ? response.content[0].text.trim() : '';
     const clean = text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
@@ -245,12 +255,12 @@ export async function classifyPhotoBatch(
     }
     content.push({ type: 'text', text: BATCH_USER_PROMPT });
 
-    const response = await withRetry(() => client.messages.create({
+    const response = await withRetry(() => withTimeout(client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 300 * photos.length,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content }],
-    }));
+    }), 90_000));
 
     const text = response.content[0].type === 'text' ? response.content[0].text.trim() : '';
     const clean = text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
