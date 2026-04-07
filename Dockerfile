@@ -4,6 +4,8 @@ FROM node:22-bookworm AS builder
 # Build tools + libvips with full codec support (libheif + libde265 for HEIC/HEVC)
 RUN apt-get update && apt-get install -y \
     python3 make g++ pkg-config \
+    libglib2.0-dev \
+    libexpat1-dev \
     libvips-dev \
     libheif-dev \
     libde265-dev \
