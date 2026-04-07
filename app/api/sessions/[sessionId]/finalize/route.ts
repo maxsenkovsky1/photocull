@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs';
-import { readSession, writeSession, getOriginalPath, getThumbnailPath } from '@/lib/storage';
+import { db, schema } from '@/lib/db';
+import { eq } from 'drizzle-orm';
+import { readSessionFromDb } from '@/lib/storage-db';
+import { deleteObject } from '@/lib/object-storage';
 import type { AuditEntry } from '@/types';
 
 export async function POST(
@@ -8,7 +10,7 @@ export async function POST(
   { params }: { params: Promise<{ sessionId: string }> }
 ) {
   const { sessionId } = await params;
-  const session = readSession(sessionId);
+  const session = await readSessionFromDb(sessionId);
   if (!session) {
     return NextResponse.json({ error: 'Session not found' }, { status: 404 });
   }
@@ -19,22 +21,22 @@ export async function POST(
 
   const trashedPhotos = session.photos.filter((p) => p.status === 'trash');
   let freedBytes = 0;
-  const newAuditEntries: AuditEntry[] = [];
 
   for (const photo of trashedPhotos) {
-    // Delete original
-    const originalPath = getOriginalPath(sessionId, photo.id, photo.ext);
-    if (fs.existsSync(originalPath)) {
-      freedBytes += fs.statSync(originalPath).size;
-      fs.unlinkSync(originalPath);
-    }
+    // Delete original from R2
+    const origKey = `sessions/${sessionId}/originals/${photo.id}${photo.ext}`;
+    try {
+      await deleteObject(origKey);
+      freedBytes += photo.fileSize;
+    } catch { /* already gone */ }
 
-    // Delete thumbnail
-    const thumbPath = getThumbnailPath(sessionId, photo.id);
-    if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
+    // Delete thumbnail from R2
+    const thumbKey = `sessions/${sessionId}/thumbs/${photo.id}.jpg`;
+    try { await deleteObject(thumbKey); } catch { /* ok */ }
 
-    newAuditEntries.push({
-      timestamp: new Date().toISOString(),
+    // Audit entry
+    await db.insert(schema.auditEntries).values({
+      sessionId,
       photoId: photo.id,
       filename: photo.filename,
       action: 'permanently_deleted',
@@ -42,17 +44,16 @@ export async function POST(
     });
   }
 
-  // Count kept photos (not logged individually — only destructive actions are audited)
   const keptPhotos = session.photos.filter((p) => p.status !== 'trash');
 
-  session.auditLog = [...session.auditLog, ...newAuditEntries];
-  session.finalizedAt = new Date().toISOString();
-  writeSession(session);
+  // Mark session as finalized
+  await db.update(schema.sessions).set({
+    finalizedAt: new Date(),
+  }).where(eq(schema.sessions.id, sessionId));
 
   return NextResponse.json({
     deleted: trashedPhotos.length,
     kept: keptPhotos.length,
     freedBytes,
-    auditLog: session.auditLog,
   });
 }

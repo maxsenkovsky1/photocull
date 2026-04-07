@@ -251,13 +251,13 @@ export async function generateThumbnail(input: string | Buffer): Promise<Buffer 
 /**
  * Extract basic metadata from an image.
  */
-export async function extractMetadata(imagePath: string): Promise<{
+export async function extractMetadata(input: string | Buffer): Promise<{
   width: number | null;
   height: number | null;
   takenAt: string | null;
 }> {
   try {
-    const metadata = await sharp(imagePath, { limitInputPixels: false }).metadata();
+    const metadata = await sharp(input, { limitInputPixels: false }).metadata();
     let takenAt: string | null = null;
     if (metadata.exif) {
       // Try to parse DateTimeOriginal from EXIF
@@ -280,6 +280,9 @@ export async function extractMetadata(imagePath: string): Promise<{
     return { width: null, height: null, takenAt: null };
   }
 }
+
+/** Alias for extractMetadata that accepts a Buffer — used by the DB-backed analyze route. */
+export const extractMetadataFromBuffer = extractMetadata;
 
 /**
  * Quick local content detection — avoids an API call for obvious non-photos.

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs';
 import JSZip from 'jszip';
-import { readSession, getOriginalPath } from '@/lib/storage';
+import { readSessionFromDb } from '@/lib/storage-db';
+import { getObject } from '@/lib/object-storage';
 
 export const maxDuration = 120;
 
@@ -11,7 +11,7 @@ export async function GET(
 ) {
   const { sessionId } = await params;
 
-  const session = readSession(sessionId);
+  const session = await readSessionFromDb(sessionId);
   if (!session) {
     return NextResponse.json({ error: 'Session not found' }, { status: 404 });
   }
@@ -22,10 +22,12 @@ export async function GET(
   const folder = zip.folder('Shortlist_Kept');
 
   for (const photo of keptPhotos) {
-    const filePath = getOriginalPath(sessionId, photo.id, photo.ext);
-    if (fs.existsSync(filePath)) {
-      const buffer = fs.readFileSync(filePath);
+    const key = `sessions/${sessionId}/originals/${photo.id}${photo.ext}`;
+    try {
+      const buffer = await getObject(key);
       folder!.file(photo.filename, buffer);
+    } catch {
+      console.warn(`[download] skipping ${photo.filename} — not found in R2`);
     }
   }
 

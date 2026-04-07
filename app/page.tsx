@@ -1,74 +1,10 @@
 'use client';
 
-import { useCallback, useRef, useState, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { UserButton } from '@clerk/nextjs';
 import { AGGRESSIVENESS_LABELS, DEFAULT_CATEGORY_CONFIG } from '@/types';
 import type { PhotoCategoryConfig } from '@/types';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Beta access gate
-// ─────────────────────────────────────────────────────────────────────────────
-
-function AccessGate({ onAuthorized }: { onAuthorized: () => void }) {
-  const [code, setCode] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-    try {
-      const res = await fetch('/api/auth/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
-      });
-      if (res.ok) {
-        onAuthorized();
-      } else {
-        const data = await res.json();
-        setError(data.error ?? 'Incorrect code. Please try again.');
-      }
-    } catch {
-      setError('Network error. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <main className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4">
-      <div className="mb-8 text-center">
-        <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Shortlist</h1>
-        <p className="mt-2 text-gray-700 text-base font-medium">Delete the clutter. Keep the memories.</p>
-        <p className="mt-1 text-gray-400 text-sm">AI-powered photo cleanup</p>
-      </div>
-      <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
-        <h2 className="text-lg font-semibold text-gray-800 mb-1">Beta access</h2>
-        <p className="text-sm text-gray-500 mb-6">Enter the access code to continue.</p>
-        <form onSubmit={submit} className="space-y-4">
-          <input
-            type="password"
-            autoFocus
-            placeholder="Access code"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-          />
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          <button
-            type="submit"
-            disabled={!code || loading}
-            className="w-full py-2.5 rounded-xl font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-200 disabled:text-gray-400 transition-colors"
-          >
-            {loading ? 'Checking…' : 'Enter →'}
-          </button>
-        </form>
-      </div>
-    </main>
-  );
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -120,18 +56,6 @@ function CategoryToggle({
 export default function UploadPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // ── Auth gate ──────────────────────────────────────────────────────────────
-  const [authState, setAuthState] = useState<'checking' | 'open' | 'gated'>('checking');
-
-  useEffect(() => {
-    fetch('/api/auth/validate')
-      .then((r) => r.json())
-      .then((d: { required: boolean; authorized: boolean }) => {
-        setAuthState(d.required && !d.authorized ? 'gated' : 'open');
-      })
-      .catch(() => setAuthState('open')); // if endpoint fails, don't block
-  }, []);
 
   const [mode, setMode] = useState<'aggressiveness' | 'percentage'>('aggressiveness');
   const [aggressiveness, setAggressiveness] = useState(3); // default to Balanced
@@ -292,18 +216,14 @@ export default function UploadPage() {
   const label = AGGRESSIVENESS_LABELS[aggressiveness];
   const isExpert = label.expert;
 
-  if (authState === 'checking') return (
-    <main className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-    </main>
-  );
-  if (authState === 'gated') return <AccessGate onAuthorized={() => setAuthState('open')} />;
-
   return (
     <main className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4 py-12">
 
-      {/* Logo */}
-      <div className="mb-8 text-center">
+      {/* Logo + User button */}
+      <div className="mb-8 text-center relative">
+        <div className="absolute right-0 top-0">
+          <UserButton />
+        </div>
         <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Shortlist</h1>
         <p className="mt-2 text-gray-700 text-base font-medium">Delete the clutter. Keep the memories.</p>
         <p className="mt-1 text-gray-400 text-sm">AI-powered photo cleanup</p>

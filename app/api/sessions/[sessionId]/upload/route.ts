@@ -1,16 +1,19 @@
 import { NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
-import fs from 'fs';
 import path from 'path';
-import { pipeline } from 'stream/promises';
-import { Readable } from 'stream';
-import { readSession, writeSession, getOriginalPath, getMetadataDir, ensureSessionDirs } from '@/lib/storage';
-import type { Photo } from '@/types';
+import { sessionExistsInDb, addPhotoToDb } from '@/lib/storage-db';
+import { uploadObject, originalKey } from '@/lib/object-storage';
 
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
 const ACCEPTED_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.heic', '.heif', '.webp', '.gif', '.tiff', '.tif']);
+
+const MIME_TYPES: Record<string, string> = {
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+  '.webp': 'image/webp', '.gif': 'image/gif', '.heic': 'image/heic',
+  '.heif': 'image/heif', '.tiff': 'image/tiff', '.tif': 'image/tiff',
+};
 
 export async function POST(
   request: Request,
@@ -19,29 +22,25 @@ export async function POST(
   const { sessionId } = await params;
 
   try {
-    const session = readSession(sessionId);
-    if (!session) {
+    const exists = await sessionExistsInDb(sessionId);
+    if (!exists) {
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
-
-    ensureSessionDirs(sessionId);
 
     const url = new URL(request.url);
     const filename = url.searchParams.get('filename') ?? '';
     const fileSize = parseInt(url.searchParams.get('size') ?? '0', 10);
     const ext = path.extname(filename).toLowerCase();
 
-    // JSON sidecar
+    // JSON sidecar — store in R2 under metadata/
     if (ext === '.json') {
-      const metaDir = getMetadataDir(sessionId);
-      const metaPath = path.join(metaDir, filename);
       const buf = Buffer.from(await request.arrayBuffer());
-      fs.writeFileSync(metaPath, buf);
-      return NextResponse.json({ uploaded: [], total: session.photos.length });
+      await uploadObject(`sessions/${sessionId}/metadata/${filename}`, buf, 'application/json');
+      return NextResponse.json({ uploaded: [], total: 0 });
     }
 
     if (!ACCEPTED_IMAGE_EXTENSIONS.has(ext)) {
-      return NextResponse.json({ uploaded: [], total: session.photos.length });
+      return NextResponse.json({ uploaded: [], total: 0 });
     }
 
     if (!request.body) {
@@ -49,59 +48,23 @@ export async function POST(
     }
 
     const photoId = uuidv4();
-    const filePath = getOriginalPath(sessionId, photoId, ext);
+    const key = originalKey(sessionId, photoId, ext);
 
-    // Try streaming to disk first (memory-efficient for large files)
-    let saved = false;
-    try {
-      const writeStream = fs.createWriteStream(filePath);
-      await pipeline(Readable.fromWeb(request.body as import('stream/web').ReadableStream), writeStream);
-      saved = true;
-    } catch (streamErr) {
-      console.warn(`[upload] stream failed for ${filename}, retrying with buffer:`, streamErr);
-      // Clean up partial file if it exists
-      try { fs.unlinkSync(filePath); } catch { /* ignore */ }
-    }
+    // Buffer the file and upload to R2
+    const buf = Buffer.from(await request.arrayBuffer());
+    await uploadObject(key, buf, MIME_TYPES[ext] ?? 'application/octet-stream');
 
-    // Fallback: buffer the whole file (works when streaming pipeline fails)
-    if (!saved) {
-      try {
-        const buf = Buffer.from(await request.arrayBuffer());
-        fs.writeFileSync(filePath, buf);
-        saved = true;
-      } catch (bufErr) {
-        console.error(`[upload] buffer fallback also failed for ${filename}:`, bufErr);
-        return NextResponse.json({ error: `Failed to save file: ${filename}` }, { status: 500 });
-      }
-    }
-
-    const photo: Photo = {
+    // Create photo record in Postgres
+    await addPhotoToDb({
       id: photoId,
+      sessionId,
       filename,
       ext,
       fileSize,
-      width: null,
-      height: null,
-      takenAt: null,
-      blurScore: null,
-      phash: null,
-      classification: 'photo',
-      qualityScore: null,
-      sentimentScore: null,
-      faceScore: null,
-      description: null,
-      status: 'pending',
-      deleteReason: null,
-      duplicateGroupId: null,
-      isDuplicateBest: false,
-      isFavorite: false,
-    };
+      originalKey: key,
+    });
 
-    session.photos.push(photo);
-    session.status = 'uploading';
-    writeSession(session);
-
-    return NextResponse.json({ uploaded: [{ id: photoId, filename, ext, fileSize }], total: session.photos.length });
+    return NextResponse.json({ uploaded: [{ id: photoId, filename, ext, fileSize }], total: 0 });
   } catch (err) {
     console.error('[upload] unexpected error:', err);
     return NextResponse.json({ error: 'Unexpected server error during upload' }, { status: 500 });

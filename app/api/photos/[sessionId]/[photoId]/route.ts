@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { readSession, writeSession } from '@/lib/storage';
+import { db, schema } from '@/lib/db';
+import { eq, and } from 'drizzle-orm';
 import type { PhotoStatus } from '@/types';
 
 export async function PATCH(
@@ -8,17 +9,18 @@ export async function PATCH(
 ) {
   const { sessionId, photoId } = await params;
 
-  const session = readSession(sessionId);
-  if (!session) {
-    return NextResponse.json({ error: 'Session not found' }, { status: 404 });
-  }
+  const [photo] = await db
+    .select()
+    .from(schema.photos)
+    .where(and(eq(schema.photos.id, photoId), eq(schema.photos.sessionId, sessionId)))
+    .limit(1);
 
-  const photo = session.photos.find((p) => p.id === photoId);
   if (!photo) {
     return NextResponse.json({ error: 'Photo not found' }, { status: 404 });
   }
 
   const body = await request.json();
+  const updates: Record<string, unknown> = {};
 
   // Update status
   if (body.status !== undefined) {
@@ -26,22 +28,27 @@ export async function PATCH(
     if (!['keep', 'suggested_delete', 'trash', 'pending'].includes(newStatus)) {
       return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
     }
-    photo.status = newStatus;
+    updates.status = newStatus;
   }
 
   // Toggle favorite
   if (body.isFavorite !== undefined) {
-    photo.isFavorite = Boolean(body.isFavorite);
+    updates.isFavorite = Boolean(body.isFavorite);
     // Favorites are never trash — restore if currently trashed
-    if (photo.isFavorite && photo.status === 'trash') {
-      photo.status = 'keep';
+    const currentStatus = (updates.status as string) ?? photo.status;
+    if (updates.isFavorite && currentStatus === 'trash') {
+      updates.status = 'keep';
     }
-    // Favorites can't be suggested for deletion
-    if (photo.isFavorite && photo.status === 'suggested_delete') {
-      photo.status = 'pending';
+    if (updates.isFavorite && currentStatus === 'suggested_delete') {
+      updates.status = 'pending';
     }
   }
 
-  writeSession(session);
-  return NextResponse.json({ id: photoId, status: photo.status, isFavorite: photo.isFavorite });
+  await db.update(schema.photos).set(updates).where(eq(schema.photos.id, photoId));
+
+  return NextResponse.json({
+    id: photoId,
+    status: (updates.status as string) ?? photo.status,
+    isFavorite: (updates.isFavorite as boolean) ?? photo.isFavorite,
+  });
 }

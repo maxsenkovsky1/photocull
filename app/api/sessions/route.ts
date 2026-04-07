@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
-import { ensureSessionDirs, writeSession } from '@/lib/storage';
-import type { Session, SessionMode, PhotoCategoryConfig } from '@/types';
+import { requireUserId } from '@/lib/auth';
+import { createSessionInDb } from '@/lib/storage-db';
+import type { SessionMode, PhotoCategoryConfig } from '@/types';
 import { DEFAULT_CATEGORY_CONFIG } from '@/types';
 
 export async function POST(request: Request) {
   try {
+    const userId = await requireUserId();
     const body = await request.json();
     const mode: SessionMode = body.mode === 'percentage' ? 'percentage' : 'aggressiveness';
     const aggressiveness = Math.min(5, Math.max(1, parseInt(body.aggressiveness) || 3));
@@ -22,25 +24,19 @@ export async function POST(request: Request) {
       removeLowQuality:  body.categoryConfig?.removeLowQuality  ?? DEFAULT_CATEGORY_CONFIG.removeLowQuality,
     };
 
-    const session: Session = {
-      id: uuidv4(),
-      createdAt: new Date().toISOString(),
+    const sessionId = uuidv4();
+
+    await createSessionInDb({
+      id: sessionId,
+      userId,
       aggressiveness,
       mode,
       targetPercentage,
       categoryConfig,
       skipAI: Boolean(body.skipAI),
-      status: 'uploading',
-      photos: [],
-      analysisProgress: 0,
-      analysisStage: '',
-      auditLog: [],
-    };
+    });
 
-    ensureSessionDirs(session.id);
-    writeSession(session);
-
-    return NextResponse.json({ id: session.id });
+    return NextResponse.json({ id: sessionId });
   } catch (err) {
     console.error('Create session error:', err);
     return NextResponse.json({ error: 'Failed to create session' }, { status: 500 });

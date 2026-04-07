@@ -287,6 +287,117 @@ export async function classifyPhotoBatch(
   }
 }
 
+// ─── Buffer-based variants (for R2/DB pipeline — no file paths) ─────────────
+
+export async function classifyPhotoFromBuffer(
+  thumbnailBuffer: Buffer,
+  phash?: string | null,
+): Promise<ClassificationResult> {
+  const fallback: ClassificationResult = {
+    classification: 'photo', qualityScore: 50, sentimentScore: 50, faceScore: 0, description: '',
+  };
+
+  if (phash) {
+    const cached = getCachedResult(phash);
+    if (cached) return cached;
+  }
+
+  try {
+    const resized = await sharp(thumbnailBuffer)
+      .resize(200, 200, { fit: 'inside' })
+      .jpeg({ quality: 75 })
+      .toBuffer();
+    const base64 = resized.toString('base64');
+
+    const response = await withRetry(() => withTimeout(client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 300,
+      system: SYSTEM_PROMPT,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } },
+          { type: 'text', text: USER_PROMPT },
+        ],
+      }],
+    }), 45_000));
+
+    const text = response.content[0].type === 'text' ? response.content[0].text.trim() : '';
+    const clean = text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+    const parsed = JSON.parse(clean);
+
+    const result: ClassificationResult = {
+      classification: (parsed.classification as PhotoClassification) ?? 'photo',
+      qualityScore:   clamp(parseInt(parsed.quality_score)   || 50),
+      sentimentScore: clamp(parseInt(parsed.sentiment_score) || 50),
+      faceScore:      clamp(parseInt(parsed.face_score)      || 0),
+      description:    String(parsed.description ?? '').slice(0, 200),
+    };
+
+    if (phash) setCachedResult(phash, result);
+    return result;
+  } catch (err) {
+    console.error('[classifyPhotoFromBuffer] Failed:', err instanceof Error ? err.message : err);
+    return fallback;
+  }
+}
+
+export async function classifyPhotoBatchFromBuffers(
+  photos: Array<{ thumbnailBuffer: Buffer; phash?: string | null }>,
+): Promise<ClassificationResult[]> {
+  if (photos.length === 0) return [];
+  if (photos.length === 1) return [await classifyPhotoFromBuffer(photos[0].thumbnailBuffer, photos[0].phash)];
+
+  try {
+    const base64Images = await Promise.all(
+      photos.map(({ thumbnailBuffer }) =>
+        sharp(thumbnailBuffer)
+          .resize(200, 200, { fit: 'inside' })
+          .jpeg({ quality: 75 })
+          .toBuffer()
+          .then((buf) => buf.toString('base64')),
+      ),
+    );
+
+    const content: Anthropic.Messages.ContentBlockParam[] = [];
+    for (let i = 0; i < base64Images.length; i++) {
+      content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64Images[i] } });
+      content.push({ type: 'text', text: `Photo ${i + 1}:` });
+    }
+    content.push({ type: 'text', text: BATCH_USER_PROMPT });
+
+    const response = await withRetry(() => withTimeout(client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 300 * photos.length,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content }],
+    }), 90_000));
+
+    const text = response.content[0].type === 'text' ? response.content[0].text.trim() : '';
+    const clean = text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+    const parsed = JSON.parse(clean) as Record<string, unknown>[];
+
+    if (!Array.isArray(parsed) || parsed.length !== photos.length) {
+      throw new Error(`Expected array of ${photos.length}, got ${Array.isArray(parsed) ? parsed.length : typeof parsed}`);
+    }
+
+    return parsed.map((item, i) => {
+      const result: ClassificationResult = {
+        classification: (item.classification as PhotoClassification) ?? 'photo',
+        qualityScore:   clamp(parseInt(String(item.quality_score))   || 50),
+        sentimentScore: clamp(parseInt(String(item.sentiment_score)) || 50),
+        faceScore:      clamp(parseInt(String(item.face_score))      || 0),
+        description:    String(item.description ?? '').slice(0, 200),
+      };
+      if (photos[i].phash) setCachedResult(photos[i].phash!, result);
+      return result;
+    });
+  } catch (err) {
+    console.error('[classifyPhotoBatchFromBuffers] failed, falling back to individual:', err instanceof Error ? err.message : err);
+    return Promise.all(photos.map(({ thumbnailBuffer, phash }) => classifyPhotoFromBuffer(thumbnailBuffer, phash)));
+  }
+}
+
 function clamp(v: number, min = 0, max = 100): number {
   return Math.min(max, Math.max(min, isNaN(v) ? 50 : v));
 }

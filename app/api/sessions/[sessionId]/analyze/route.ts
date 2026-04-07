@@ -1,16 +1,12 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
 import sharp from 'sharp';
-import {
-  readSession, writeSession, getOriginalPath, getThumbnailPath,
-  getThumbnailsDir, getMetadataDir,
-} from '@/lib/storage';
+import { readSessionFromDb, writeSessionToDb, updateSessionProgress } from '@/lib/storage-db';
+import { getObject, uploadObject, thumbnailKey as makeThumbnailKey } from '@/lib/object-storage';
 import {
   computePhash, computeBlurScore, generateThumbnail,
-  extractMetadata, detectContentLocally, prepareForSharp,
+  extractMetadataFromBuffer, detectContentLocally,
 } from '@/lib/analysis';
-import { classifyPhotoBatch, getCachedResult } from '@/lib/claude';
+import { classifyPhotoBatchFromBuffers, getCachedResult } from '@/lib/claude';
 import { applyRules, groupDuplicatesWithTime } from '@/lib/rules';
 import type { Photo, PhotoClassification } from '@/types';
 import { AGGRESSIVENESS_CONFIG } from '@/types';
@@ -38,18 +34,18 @@ export async function POST(
   { params }: { params: Promise<{ sessionId: string }> }
 ) {
   const { sessionId } = await params;
-  const session = readSession(sessionId);
+  const session = await readSessionFromDb(sessionId);
   if (!session) return NextResponse.json({ error: 'Session not found' }, { status: 404 });
 
   session.status = 'analyzing';
   session.analysisProgress = 0;
   session.analysisStage = 'Processing images…';
-  writeSession(session);
+  await writeSessionToDb(session);
 
   const total = session.photos.length;
   if (total === 0) {
     session.status = 'ready';
-    writeSession(session);
+    await writeSessionToDb(session);
     return NextResponse.json({ status: 'ready' });
   }
 
@@ -58,26 +54,29 @@ export async function POST(
   // ─────────────────────────────────────────────────────────────────────────
   let stage1Done = 0;
 
+  // Keep a map of photo thumbnails in memory for Stage 2 (avoids re-downloading)
+  const thumbnailBuffers = new Map<string, Buffer>();
+
   await runConcurrent(session.photos, 4, async (photo) => {
-    const originalPath = getOriginalPath(sessionId, photo.id, photo.ext);
-    if (!fs.existsSync(originalPath)) {
+    const origKey = `sessions/${sessionId}/originals/${photo.id}${photo.ext}`;
+    let originalBuffer: Buffer;
+    try {
+      originalBuffer = await getObject(origKey);
+    } catch {
       stage1Done++;
-      return;
+      return; // file not in R2
     }
 
-    const { processPath, cleanup } = await prepareForSharp(originalPath);
     try {
-      // Decode the original file once into a 512px working buffer.
-      // All subsequent operations (blur, pHash, thumbnail) run in parallel
-      // from this small in-memory buffer — avoiding 4 separate disk reads.
-      const workingBuffer = await sharp(processPath, { limitInputPixels: false, sequentialRead: true })
+      // Decode the original into a 512px working buffer
+      const workingBuffer = await sharp(originalBuffer, { limitInputPixels: false, sequentialRead: true })
         .rotate()
         .resize(512, 512, { fit: 'inside', withoutEnlargement: true })
         .jpeg({ quality: 90 })
         .toBuffer();
 
       const [meta, blurScore, phash, thumbnailBuffer] = await Promise.all([
-        extractMetadata(processPath),       // still needs original for EXIF
+        extractMetadataFromBuffer(originalBuffer),
         computeBlurScore(workingBuffer),
         computePhash(workingBuffer),
         generateThumbnail(workingBuffer),
@@ -90,47 +89,45 @@ export async function POST(
       photo.phash     = phash;
 
       if (thumbnailBuffer) {
-        fs.mkdirSync(getThumbnailsDir(sessionId), { recursive: true });
-        fs.writeFileSync(getThumbnailPath(sessionId, photo.id), thumbnailBuffer);
+        const thumbKey = makeThumbnailKey(sessionId, photo.id);
+        await uploadObject(thumbKey, thumbnailBuffer, 'image/jpeg');
+        thumbnailBuffers.set(photo.id, thumbnailBuffer);
       }
     } catch (err) {
       console.error(`[analyze] skipping ${photo.filename} — processing failed:`, err);
-    } finally {
-      cleanup();
     }
 
     // Google Photos sidecar JSON
-    const sidecarPath = path.join(getMetadataDir(sessionId), `${photo.filename}.json`);
-    if (fs.existsSync(sidecarPath)) {
-      try {
-        const sidecar = JSON.parse(fs.readFileSync(sidecarPath, 'utf-8'));
-        if (sidecar.favorited === true) photo.isFavorite = true;
-        if (!photo.takenAt && sidecar.photoTakenTime?.timestamp) {
-          const ts = parseInt(sidecar.photoTakenTime.timestamp, 10);
-          if (!isNaN(ts)) photo.takenAt = new Date(ts * 1000).toISOString();
-        }
-      } catch { /* ignore malformed sidecar */ }
-    }
+    try {
+      const sidecarBuf = await getObject(`sessions/${sessionId}/metadata/${photo.filename}.json`);
+      const sidecar = JSON.parse(sidecarBuf.toString('utf-8'));
+      if (sidecar.favorited === true) photo.isFavorite = true;
+      if (!photo.takenAt && sidecar.photoTakenTime?.timestamp) {
+        const ts = parseInt(sidecar.photoTakenTime.timestamp, 10);
+        if (!isNaN(ts)) photo.takenAt = new Date(ts * 1000).toISOString();
+      }
+    } catch { /* no sidecar — fine */ }
 
     stage1Done++;
     session.analysisProgress = Math.max(1, Math.round((stage1Done / total) * 35));
     session.analysisStage = `Processing images… (${stage1Done}/${total})`;
-    writeSession(session);
+    await updateSessionProgress(sessionId, session.analysisProgress, session.analysisStage);
   });
+
+  // Persist all Stage 1 results
+  await writeSessionToDb(session);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Pre-classification optimisations
   // ─────────────────────────────────────────────────────────────────────────
 
-  // Opt A: Local content detection
+  // Opt A: Local content detection (runs on thumbnail buffers)
   const localDetections = new Map<string, PhotoClassification>();
   if (!session.skipAI) {
     for (const photo of session.photos) {
-      const thumbPath    = getThumbnailPath(sessionId, photo.id);
-      const originalPath = getOriginalPath(sessionId, photo.id, photo.ext);
-      const detectPath   = fs.existsSync(thumbPath) ? thumbPath : originalPath;
-      if (!fs.existsSync(detectPath)) continue;
-      const detected = await detectContentLocally(detectPath);
+      const thumbBuf = thumbnailBuffers.get(photo.id);
+      if (!thumbBuf) continue;
+      const detected = await detectContentLocally(thumbBuf);
       if (detected) localDetections.set(photo.id, detected);
     }
   }
@@ -175,12 +172,11 @@ export async function POST(
   // Stage 2: AI classification — batched (4 images per API call)
   // ─────────────────────────────────────────────────────────────────────────
   session.analysisStage = session.skipAI ? 'Skipping AI…' : 'Classifying with AI…';
-  writeSession(session);
+  await updateSessionProgress(sessionId, 35, session.analysisStage);
 
   let aiCallCount  = 0;
   let cacheHits    = 0;
   let skippedLocal = 0;
-  let skippedDup   = 0;
   let stage2Done   = 0;
 
   const BATCH_SIZE = 4;
@@ -198,7 +194,7 @@ export async function POST(
       photo.description    = '';
       skippedLocal++;
       stage2Done++;
-    } else if (!session.skipAI && fs.existsSync(getThumbnailPath(sessionId, photo.id))) {
+    } else if (!session.skipAI && thumbnailBuffers.has(photo.id)) {
       const cached = getCachedResult(photo.phash);
       if (cached) {
         photo.classification = cached.classification;
@@ -218,21 +214,22 @@ export async function POST(
 
   // Flush progress after immediate assignments
   session.analysisProgress = 35 + Math.round((stage2Done / total) * 55);
-  writeSession(session);
+  await updateSessionProgress(sessionId, session.analysisProgress, session.analysisStage);
 
-  // Split Claude queue into batches of 4, then run 3 batches concurrently
+  // Split Claude queue into batches of 4, then run 2 batches concurrently
   const batches: Photo[][] = [];
   for (let i = 0; i < claudeQueue.length; i += BATCH_SIZE) {
     batches.push(claudeQueue.slice(i, i + BATCH_SIZE));
   }
 
   await runConcurrent(batches, 2, async (batch) => {
+    // Pass thumbnail buffers directly to Claude instead of file paths
     const batchInput = batch.map((p) => ({
-      thumbnailPath: getThumbnailPath(sessionId, p.id),
+      thumbnailBuffer: thumbnailBuffers.get(p.id)!,
       phash: p.phash,
     }));
 
-    const results = await classifyPhotoBatch(batchInput);
+    const results = await classifyPhotoBatchFromBuffers(batchInput);
     aiCallCount += batch.length;
 
     for (let j = 0; j < batch.length; j++) {
@@ -248,37 +245,34 @@ export async function POST(
 
     session.analysisProgress = 35 + Math.round((stage2Done / total) * 55);
     session.analysisStage    = `Classifying with AI… (${stage2Done}/${total})`;
-    writeSession(session);
+    await updateSessionProgress(sessionId, session.analysisProgress, session.analysisStage);
   });
 
-  // For skipped dup members that weren't classified (no thumbnail), copy
-  // only quality scores from the rep — never classification, since a
-  // skipped dup could be a screenshot that must keep its own identity.
+  // Copy quality scores (not classification) from rep to skipped dups
   for (const [groupId, repId] of clusterRepMap.entries()) {
     const rep = session.photos.find((p) => p.id === repId);
     if (!rep) continue;
     for (const photo of session.photos) {
       if (!skippedDupIds.has(photo.id)) continue;
       if (!(prelimGroups.get(groupId) ?? []).includes(photo.id)) continue;
-      if (photo.qualityScore !== null) continue; // already classified — don't overwrite
+      if (photo.qualityScore !== null) continue;
       photo.qualityScore   = rep.qualityScore;
       photo.sentimentScore = rep.sentimentScore;
       photo.faceScore      = rep.faceScore;
       photo.description    = rep.description;
-      // classification intentionally NOT copied — each photo keeps its own
     }
   }
 
   const aiOk = session.skipAI || aiCallCount > 0 || cacheHits > 0;
   session.aiClassificationRan = aiOk;
-  console.log(`[analyze] ${total} photos: ${aiCallCount} API calls (batched), ${cacheHits} cache hits, ${skippedLocal} local, ${skippedDup} dup copies`);
+  console.log(`[analyze] ${total} photos: ${aiCallCount} API calls (batched), ${cacheHits} cache hits, ${skippedLocal} local`);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Stage 3: Rules + duplicate grouping
   // ─────────────────────────────────────────────────────────────────────────
   session.analysisStage    = 'Applying rules…';
   session.analysisProgress = 92;
-  writeSession(session);
+  await updateSessionProgress(sessionId, 92, 'Applying rules…');
 
   applyRules(session.photos, session.aggressiveness, session.mode, session.targetPercentage, session.categoryConfig);
 
@@ -287,7 +281,11 @@ export async function POST(
   session.analysisStage    = session.skipAI
     ? 'Complete (AI skipped)'
     : (aiOk ? 'Complete' : 'AI unavailable — check API credits');
-  writeSession(session);
+  await writeSessionToDb(session);
+
+  // Free memory
+  thumbnailBuffers.clear();
 
   return NextResponse.json({ status: 'ready', total: session.photos.length, aiCallCount, cacheHits });
 }
+
