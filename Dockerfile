@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
+# node-addon-api is required to build Sharp from source
+RUN npm install --save-dev node-addon-api
 # Rebuild Sharp from source so it links against system libvips (unlocks HEIC support)
 RUN npm rebuild sharp --build-from-source
 
