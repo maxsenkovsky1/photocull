@@ -116,9 +116,20 @@ export async function POST(
         const thumbKey = makeThumbnailKey(sessionId, photo.id);
         await uploadObject(thumbKey, thumbnailBuffer, 'image/jpeg');
         thumbnailBuffers.set(photo.id, thumbnailBuffer);
+      } else {
+        console.warn(`[analyze] no thumbnail generated for ${photo.filename} (${photo.ext}) — will skip AI`);
       }
     } catch (err) {
       console.error(`[analyze] skipping ${photo.filename} — processing failed:`, err instanceof Error ? err.message : err);
+      // Assign fallback scores so the photo still appears in the review UI
+      // Use filename/extension heuristics for classification
+      const lowerName = photo.filename.toLowerCase();
+      const isScreenshot = lowerName.includes('screenshot') || lowerName.includes('screen shot');
+      photo.classification = isScreenshot ? 'screenshot' : 'photo';
+      photo.qualityScore = isScreenshot ? 30 : 50;
+      photo.sentimentScore = isScreenshot ? 10 : 50;
+      photo.faceScore = 0;
+      photo.description = `Processing failed — file may be truncated or corrupt`;
     } finally {
       if (tempCleanup) tempCleanup();
     }
@@ -234,6 +245,8 @@ export async function POST(
         claudeQueue.push(photo);
       }
     } else {
+      const reason = session.skipAI ? 'skipAI' : !thumbnailBuffers.has(photo.id) ? 'no-thumbnail' : 'unknown';
+      console.log(`[analyze] skipping AI for ${photo.filename} (${photo.ext}) — reason: ${reason}`);
       stage2Done++;
     }
   }
@@ -255,8 +268,17 @@ export async function POST(
       phash: p.phash,
     }));
 
-    const results = await classifyPhotoBatchFromBuffers(batchInput);
-    aiCallCount += batch.length;
+    let results: Awaited<ReturnType<typeof classifyPhotoBatchFromBuffers>>;
+    try {
+      results = await classifyPhotoBatchFromBuffers(batchInput);
+      aiCallCount += batch.length;
+    } catch (batchErr) {
+      console.error(`[analyze] batch of ${batch.length} failed — skipping AI for: ${batch.map(p => p.filename).join(', ')}`, batchErr instanceof Error ? batchErr.message : batchErr);
+      stage2Done += batch.length;
+      session.analysisProgress = 35 + Math.round((stage2Done / total) * 55);
+      await updateSessionProgress(sessionId, session.analysisProgress, session.analysisStage);
+      return;
+    }
 
     for (let j = 0; j < batch.length; j++) {
       const photo  = batch[j];

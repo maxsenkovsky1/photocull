@@ -52,6 +52,13 @@ export async function POST(
 
     // Buffer the file and upload to R2
     const buf = Buffer.from(await request.arrayBuffer());
+
+    // Verify upload wasn't truncated (Next.js has a body size limit)
+    if (fileSize > 0 && buf.length < fileSize * 0.95) {
+      console.error(`[upload] truncated: ${filename} expected ${fileSize} bytes, got ${buf.length}`);
+      return NextResponse.json({ error: `Upload truncated: expected ${fileSize} bytes but received ${buf.length}. File may be too large.` }, { status: 413 });
+    }
+
     await uploadObject(key, buf, MIME_TYPES[ext] ?? 'application/octet-stream');
 
     // Create photo record in Postgres
