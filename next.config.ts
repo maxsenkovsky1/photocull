@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  compress: true, // gzip responses — important for mobile/cellular
   experimental: {
     serverActions: {
       bodySizeLimit: '50mb',
