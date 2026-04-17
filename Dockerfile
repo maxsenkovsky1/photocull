@@ -5,6 +5,10 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
+# Dummy DATABASE_URL so next build can collect page data without a real DB.
+# The real value is injected at runtime by Railway.
+ARG DATABASE_URL=postgresql://build:build@localhost:5432/build
+ENV DATABASE_URL=$DATABASE_URL
 RUN npm run build
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────

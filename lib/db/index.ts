@@ -2,9 +2,14 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from './schema';
 
+// Re-export schema for convenience
+export { schema };
+
+// Connection is created lazily at first use so that `next build` can
+// collect page data without DATABASE_URL being set in the build container.
 let _db: ReturnType<typeof drizzle<typeof schema>> | null = null;
 
-function getDb() {
+export function getDb() {
   if (_db) return _db;
 
   const connectionString = process.env.DATABASE_URL;
@@ -22,12 +27,13 @@ function getDb() {
   return _db;
 }
 
-// Lazy proxy — only connects when a property is accessed at request time
+/**
+ * Default export for backwards compatibility.
+ * All route handlers should use `getDb()` instead if the build still
+ * evaluates this module at compile time.
+ */
 export const db = new Proxy({} as ReturnType<typeof drizzle<typeof schema>>, {
   get(_target, prop, receiver) {
     return Reflect.get(getDb(), prop, receiver);
   },
 });
-
-// Re-export schema for convenience
-export { schema };
