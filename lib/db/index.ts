@@ -2,12 +2,10 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from './schema';
 
-const connectionString = process.env.DATABASE_URL;
+const connectionString = process.env.DATABASE_URL ?? '';
 
-if (!connectionString) {
-  throw new Error('DATABASE_URL environment variable is required');
-}
-
+// Connection is created even with an empty string at build time —
+// it will only fail when actually queried at runtime.
 const client = postgres(connectionString, {
   max: 10,
   idle_timeout: 20,

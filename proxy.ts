@@ -11,7 +11,7 @@ const isProtectedRoute = createRouteMatcher([
   // Note: /api/classify is intentionally unprotected for mobile app access
 ]);
 
-export default clerkMiddleware(async (auth, req) => {
+export const proxy = clerkMiddleware(async (auth, req) => {
   if (isProtectedRoute(req)) {
     await auth.protect();
   }
